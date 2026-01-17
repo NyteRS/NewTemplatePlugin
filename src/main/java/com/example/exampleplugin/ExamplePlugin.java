@@ -15,8 +15,5 @@ public class ExamplePlugin extends JavaPlugin {
     @Override
     protected void setup() {
         this.getCommandRegistry().registerCommand(new ExampleCommand(this.getName(), this.getManifest().getVersion().toString()));
-        this.getCommandRegistry().registerCommand(new com.example.exampleplugin.command.ReloadLifestealCommand());
-        this.getEntityStoreRegistry().registerSystem(new com.example.exampleplugin.LifestealSystems.LifestealOnDamage());
-        LOGGER.atInfo().log("Registered lifesteal command and damage system");
     }
 }
