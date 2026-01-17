@@ -219,6 +219,10 @@ public class AssetLifestealLoader {
      * Finds a getter method for a field.
      */
     private static Method findGetter(Class<?> clazz, String fieldName) {
+        if (fieldName == null || fieldName.isEmpty()) {
+            return null;
+        }
+        
         String getterName = "get" + fieldName.substring(0, 1).toUpperCase() + fieldName.substring(1);
         
         Class<?> current = clazz;
