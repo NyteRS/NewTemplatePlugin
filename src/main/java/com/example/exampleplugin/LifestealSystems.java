@@ -236,7 +236,7 @@ public class LifestealSystems {
             try {
                 // Try setHealth method
                 Method getHealthMethod = findMethod(entity.getClass(), "getHealth");
-                Method setHealthMethod = findMethodWithParam(entity.getClass(), "setHealth", double.class);
+                Method setHealthMethod = findMethod(entity.getClass(), "setHealth");
                 
                 if (getHealthMethod != null && setHealthMethod != null) {
                     Object currentHealth = getHealthMethod.invoke(entity);
@@ -249,46 +249,6 @@ public class LifestealSystems {
             } catch (Exception e) {
                 LOGGER.atDebug().log("Alternative heal method failed: %s", e.getMessage());
             }
-        }
-
-        /**
-         * Finds a method with a single parameter in a class or its superclasses.
-         */
-        private Method findMethodWithParam(Class<?> clazz, String methodName, Class<?> paramType) {
-            Class<?> current = clazz;
-            while (current != null) {
-                try {
-                    for (Method method : current.getDeclaredMethods()) {
-                        if (method.getName().equals(methodName) && method.getParameterCount() == 1) {
-                            Class<?>[] paramTypes = method.getParameterTypes();
-                            if (paramTypes[0].equals(paramType) || 
-                                (paramType.isPrimitive() && isCompatiblePrimitive(paramTypes[0], paramType))) {
-                                return method;
-                            }
-                        }
-                    }
-                    current = current.getSuperclass();
-                } catch (Exception e) {
-                    break;
-                }
-            }
-            return null;
-        }
-
-        /**
-         * Checks if a wrapper class is compatible with a primitive type.
-         */
-        private boolean isCompatiblePrimitive(Class<?> wrapper, Class<?> primitive) {
-            if (primitive == double.class) {
-                return wrapper == Double.class;
-            } else if (primitive == float.class) {
-                return wrapper == Float.class;
-            } else if (primitive == int.class) {
-                return wrapper == Integer.class;
-            } else if (primitive == long.class) {
-                return wrapper == Long.class;
-            }
-            return false;
         }
 
         /**

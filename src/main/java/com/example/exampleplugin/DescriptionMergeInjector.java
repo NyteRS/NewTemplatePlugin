@@ -295,10 +295,6 @@ public class DescriptionMergeInjector {
      * Finds a getter method for a field.
      */
     private static Method findGetter(Class<?> clazz, String fieldName) {
-        if (fieldName == null || fieldName.isEmpty()) {
-            return null;
-        }
-        
         String getterName = "get" + fieldName.substring(0, 1).toUpperCase() + fieldName.substring(1);
         
         Class<?> current = clazz;
@@ -321,10 +317,6 @@ public class DescriptionMergeInjector {
      * Finds a setter method for a field.
      */
     private static Method findSetter(Class<?> clazz, String fieldName, Class<?> paramType) {
-        if (fieldName == null || fieldName.isEmpty()) {
-            return null;
-        }
-        
         String setterName = "set" + fieldName.substring(0, 1).toUpperCase() + fieldName.substring(1);
         
         Class<?> current = clazz;
