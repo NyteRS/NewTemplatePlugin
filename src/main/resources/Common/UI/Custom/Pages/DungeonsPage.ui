@@ -45,6 +45,6 @@ Group {
 
   Group { Anchor: (Height: 12); }
   Group { LayoutMode: Left; Anchor: (Height: 36);
-    Button #CloseButton { Text: "Close"; Style: @PrimaryButtonStyle; Anchor: (Width: 120); }
+    TextButton #CloseButton { Text: "Close"; Style: @PrimaryButtonStyle; Anchor: (Width: 120); }
   }
 }
