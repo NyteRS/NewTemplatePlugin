@@ -18,8 +18,10 @@ public class ExamplePlugin extends JavaPlugin {
     protected void setup() {
         ComponentRegistryProxy<EntityStore> registry = getEntityStoreRegistry();
         registry.registerSystem(new LifestealSystems.LifestealOnDamage());
-
+        this.getCommandRegistry().registerCommand(new DungeonUICommand());
         // Register any other systems here
         this.getCommandRegistry().registerCommand(new ExampleCommand(this.getName(), this.getManifest().getVersion().toString()));
+        this.getEntityStoreRegistry().registerSystem(new com.example.exampleplugin.BleedSystems.BleedOnDamage());
+        this.getEntityStoreRegistry().registerSystem(new com.example.exampleplugin.BleedSystems.BleedTicking());
     }
 }

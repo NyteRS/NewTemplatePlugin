@@ -24,10 +24,11 @@ import java.util.Map;
 import java.util.HashMap;
 
 /**
- * Robust lifesteal system:
- * - prints System.out debug lines so you can see activity
+ * Robust lifesteal system (silent):
  * - uses reflection to try multiple inventory / item getters
  * - supports explicit ITEM_LIFESTEAL_MAP
+ *
+ * NOTE: all console logging removed to avoid spamming server output.
  */
 public final class LifestealSystems {
 
@@ -47,8 +48,6 @@ public final class LifestealSystems {
 
         public LifestealOnDamage() {
             super();
-            // Visible registration debug
-            System.out.println("[Lifesteal] LifestealOnDamage system constructed");
         }
 
         @Nonnull
@@ -62,74 +61,41 @@ public final class LifestealSystems {
                            @Nonnull CommandBuffer<EntityStore> commandBuffer,
                            @Nonnull Damage damageEvent) {
 
-            // quick visible marker each event call (comment out later if spammy)
-            System.out.println("[Lifesteal] handle() called for Damage event");
-
             try {
                 if (damageEvent == null) return;
-                if (damageEvent.isCancelled()) {
-                    System.out.println("[Lifesteal] damageEvent cancelled");
-                    return;
-                }
+                if (damageEvent.isCancelled()) return;
 
                 float damageAmount = damageEvent.getAmount();
-                if (damageAmount <= 0f) {
-                    System.out.println("[Lifesteal] damageAmount <= 0");
-                    return;
-                }
+                if (damageAmount <= 0f) return;
 
                 Damage.Source source = damageEvent.getSource();
-                if (!(source instanceof Damage.EntitySource)) {
-                    // not entity-sourced (could be environmental/projectile without entity source wrapper)
-                    System.out.println("[Lifesteal] source is not EntitySource");
-                    return;
-                }
+                if (!(source instanceof Damage.EntitySource)) return;
 
                 Ref<EntityStore> attackerRef = ((Damage.EntitySource) source).getRef();
-                if (attackerRef == null || !attackerRef.isValid()) {
-                    System.out.println("[Lifesteal] attackerRef invalid");
-                    return;
-                }
+                if (attackerRef == null || !attackerRef.isValid()) return;
 
                 @Nullable Entity ent = EntityUtils.getEntity(attackerRef, store);
-                if (!(ent instanceof LivingEntity)) {
-                    System.out.println("[Lifesteal] attacker is not LivingEntity");
-                    return;
-                }
+                if (!(ent instanceof LivingEntity)) return;
 
                 LivingEntity attacker = (LivingEntity) ent;
 
                 ItemStack held = getHeldItemReflective(attacker);
-                if (held == null || ItemStack.isEmpty(held)) {
-                    System.out.println("[Lifesteal] no held item found");
-                    return;
-                }
+                if (held == null || ItemStack.isEmpty(held)) return;
 
                 double lifesteal = getLifestealFromItem(held);
-                if (lifesteal <= 0.0) {
-                    System.out.println("[Lifesteal] lifesteal == 0 for item " + safeItemId(held));
-                    return;
-                }
+                if (lifesteal <= 0.0) return;
 
                 double heal = damageAmount * lifesteal;
                 if (heal <= 0.0) return;
 
                 EntityStatMap statMap = (EntityStatMap) store.getComponent(attackerRef, EntityStatMap.getComponentType());
-                if (statMap == null) {
-                    System.out.println("[Lifesteal] no EntityStatMap on attacker");
-                    return;
-                }
+                if (statMap == null) return;
 
                 float healFloat = (float) heal;
                 statMap.addStatValue(DefaultEntityStatTypes.getHealth(), healFloat);
 
-                // Visible debug
-                System.out.println(String.format("[Lifesteal] applied: attackerIndex=%d damage=%.2f lifesteal=%.3f heal=%.2f item=%s",
-                        attackerRef.getIndex(), (double) damageAmount, lifesteal, heal, safeItemId(held)));
-
-            } catch (Throwable t) {
-                System.out.println("[Lifesteal] handler exception:");
-                t.printStackTrace();
+            } catch (Throwable ignored) {
+                // intentionally silent to avoid console spam
             }
         }
 
@@ -140,10 +106,8 @@ public final class LifestealSystems {
                 Object inventory = tryInvoke(attacker, "getInventory");
                 if (inventory == null) return null;
 
-                // candidate method names on inventory
-                String[] invGetters = { "getActiveHotbarItem", "getActiveHotbarItemStack", "getActiveHotbarItemStack", "getActiveHotbarItem", "getActiveHotbarItem", "getActiveHotbarItem" , "getActiveHotbarItem", "getActiveHotbarItem" };
-                // candidate names (some jars used getActiveHotbarItem, getActiveHotbarItemStack, getActiveHotbarItem)
-                String[] tries = { "getActiveHotbarItem", "getActiveHotbarItemStack", "getActiveHotbarItem", "getActiveHotbarItem", "getItemInHand", "getActiveItem", "getActiveSlotItem", "getItem" };
+                // candidate names to try on inventory and attacker
+                String[] tries = { "getActiveHotbarItem", "getActiveHotbarItemStack", "getItemInHand", "getActiveItem", "getActiveSlotItem", "getItem" };
 
                 for (String name : tries) {
                     try {
@@ -154,7 +118,7 @@ public final class LifestealSystems {
                     }
                 }
 
-                // fallback: some LivingEntity implementations expose getActiveHotbarItem directly
+                // fallback: some LivingEntity implementations expose getter directly
                 for (String name : tries) {
                     try {
                         Method m = attacker.getClass().getMethod(name);
@@ -163,9 +127,8 @@ public final class LifestealSystems {
                     } catch (NoSuchMethodException ignore) {
                     }
                 }
-            } catch (Throwable t) {
-                System.out.println("[Lifesteal] reflection error while getting held item:");
-                t.printStackTrace();
+            } catch (Throwable ignored) {
+                // silent
             }
             return null;
         }
@@ -180,9 +143,9 @@ public final class LifestealSystems {
             }
         }
 
-        private String safeItemId(ItemStack stack) {
+        private String safeItemId(@Nullable ItemStack stack) {
             if (stack == null) return "null";
-            try { return String.valueOf(stack.getItemId()); } catch (Throwable t) { return "unknown"; }
+            try { return String.valueOf(stack.getItemId()); } catch (Throwable ignored) { return "unknown"; }
         }
 
         private double getLifestealFromItem(@Nonnull ItemStack itemStack) {

@@ -1,0 +1,10 @@
+Group {
+  Anchor: (Height: 48);
+  LayoutMode: Left;
+  Padding: (Full: 6);
+
+  Label #DungeonName { Text: "Dungeon name"; Anchor: (Weight: 1); Style: (FontSize: 14, TextColor: #ffffff); }
+  Label #DungeonSummary { Text: "Summary"; Anchor: (Width: 200); Style: (FontSize: 12, TextColor: #bfc9d9); }
+
+  TextButton #SelectButton { Text: "Select"; Anchor: (Width: 100); Style: @PrimaryButtonStyle; }
+}
