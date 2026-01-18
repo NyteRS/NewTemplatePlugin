@@ -26,25 +26,52 @@ Group {
       Anchor: (Width: 300);
       LayoutMode: Top;
 
-      Label { Text: "Available Dungeons"; Anchor: (Height: 24); Style: (FontSize: 14, TextColor: #cccccc); }
+      Label {
+        Text: "Available Dungeons";
+        Anchor: (Height: 24);
+        Style: (FontSize: 14, TextColor: #cccccc);
+      }
 
-      ScrollViewer #DungeonList { Anchor: (Fill: true); }
+      ScrollViewer #DungeonList {
+        Anchor: (Fill: true);
+      }
     }
 
     Group {
       Anchor: (Fill: true);
       LayoutMode: Top;
 
-      Label { Text: "Preview"; Anchor: (Height: 24); Style: (FontSize: 14, TextColor: #cccccc); }
+      Label {
+        Text: "Preview";
+        Anchor: (Height: 24);
+        Style: (FontSize: 14, TextColor: #cccccc);
+      }
 
-      Group #PreviewImageArea { Anchor: (Height: 180); Background: #000000(0.06); }
+      Group #PreviewImageArea {
+        Anchor: (Height: 180);
+        Background: #000000(0.06);
+      }
 
-      Label #PreviewDescription { Text: "Select a dungeon to see details"; Style: (FontSize: 13, TextColor: #aaaaaa); Anchor: (Fill: true); }
+      Label #PreviewDescription {
+        Text: "Select a dungeon to see details";
+        Style: (FontSize: 13, TextColor: #aaaaaa);
+        Anchor: (Fill: true);
+      }
     }
   }
 
   Group { Anchor: (Height: 12); }
-  Group { LayoutMode: Left; Anchor: (Height: 36);
-    TextButton #CloseButton { Text: "Close"; Style: @PrimaryButtonStyle; Anchor: (Width: 120); }
+
+  Group {
+    LayoutMode: Left;
+    Anchor: (Height: 36);
+
+    Group { FlexWeight: 1; }
+
+    TextButton #CloseButton {
+      Text: "Close";
+      Anchor: (Width: 120, Height: 28);
+      Style: @PrimaryButtonStyle;
+    }
   }
 }
