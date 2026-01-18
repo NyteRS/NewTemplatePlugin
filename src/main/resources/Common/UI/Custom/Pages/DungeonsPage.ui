@@ -28,7 +28,6 @@ Group {
 
       Label { Text: "Available Dungeons"; Anchor: (Height: 24); Style: (FontSize: 14, TextColor: #cccccc); }
 
-      // This is the container we append entries into (must match code: "#DungeonList")
       ScrollViewer #DungeonList { Anchor: (Fill: true); }
     }
 
