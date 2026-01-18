@@ -3,7 +3,6 @@ Group {
   Anchor: (Height: 56);
   Padding: (Full: 6);
 
-  /* Left: labels stacked */
   Group {
     FlexWeight: 1;
     LayoutMode: Top;
@@ -21,10 +20,8 @@ Group {
     }
   }
 
-  /* Small spacer */
   Group { Anchor: (Width: 8); }
 
-  /* Select button (explicit width so labels don't overlap it) */
   TextButton #SelectButton {
     Text: "Select";
     Anchor: (Width: 86, Height: 32);

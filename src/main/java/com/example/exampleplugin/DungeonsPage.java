@@ -5,9 +5,6 @@ import com.hypixel.hytale.codec.KeyedCodec;
 import com.hypixel.hytale.codec.builder.BuilderCodec;
 import com.hypixel.hytale.component.Ref;
 import com.hypixel.hytale.component.Store;
-import com.hypixel.hytale.protocol.packets.interface_.CustomPageLifetime;
-import com.hypixel.hytale.protocol.packets.interface_.CustomUIEventBindingType;
-import com.hypixel.hytale.protocol.packets.interface_.Page;
 import com.hypixel.hytale.server.core.Message;
 import com.hypixel.hytale.server.core.entity.entities.Player;
 import com.hypixel.hytale.server.core.entity.entities.player.pages.InteractiveCustomUIPage;
@@ -16,12 +13,19 @@ import com.hypixel.hytale.server.core.ui.builder.UICommandBuilder;
 import com.hypixel.hytale.server.core.ui.builder.UIEventBuilder;
 import com.hypixel.hytale.server.core.universe.PlayerRef;
 import com.hypixel.hytale.server.core.universe.world.storage.EntityStore;
+import com.hypixel.hytale.protocol.packets.interface_.CustomPageLifetime;
+import com.hypixel.hytale.protocol.packets.interface_.CustomUIEventBindingType;
+import com.hypixel.hytale.protocol.packets.interface_.Page;
 
 import javax.annotation.Nonnull;
+import javax.annotation.Nullable;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
- * UI page using the whitelist-style append-of-entry-template approach.
+ * DungeonsPage using preloaded preview Groups in the .ui and toggling Visible.
+ * IDs use alphanumeric names (no underscores).
  */
 public class DungeonsPage extends InteractiveCustomUIPage<DungeonsPage.DungeonsEventData> {
 
@@ -32,14 +36,23 @@ public class DungeonsPage extends InteractiveCustomUIPage<DungeonsPage.DungeonsE
         public static final BuilderCodec<DungeonsEventData> CODEC =
                 ((BuilderCodec.Builder<DungeonsEventData>) ((BuilderCodec.Builder<DungeonsEventData>)
                         BuilderCodec.builder(DungeonsEventData.class, DungeonsEventData::new)
-                                .append(new KeyedCodec<>("Action", Codec.STRING), (DungeonsEventData o, String v) -> o.action = v, (DungeonsEventData o) -> o.action)
+                                .append(new KeyedCodec<>("Action", (Codec) Codec.STRING), (DungeonsEventData o, String v) -> o.action = v, (DungeonsEventData o) -> o.action)
                                 .add())
-                        .append(new KeyedCodec<>("Id", Codec.STRING), (DungeonsEventData o, String v) -> o.id = v, (DungeonsEventData o) -> o.id)
+                        .append(new KeyedCodec<>("Id", (Codec) Codec.STRING), (DungeonsEventData o, String v) -> o.id = v, (DungeonsEventData o) -> o.id)
                         .add())
                         .build();
     }
 
     private final PlayerRef playerRef;
+
+    // Map dungeon id -> preview control id (no underscores)
+    private static final Map<String, String> PREVIEW_IDS = new HashMap<>();
+    static {
+        PREVIEW_IDS.put("d1", "PreviewD1");
+        PREVIEW_IDS.put("d2", "PreviewD2");
+        PREVIEW_IDS.put("d3", "PreviewD3");
+        // Add more mappings if you add more preloaded Groups in the .ui
+    }
 
     public DungeonsPage(@Nonnull PlayerRef playerRef) {
         super(playerRef, CustomPageLifetime.CanDismissOrCloseThroughInteraction, DungeonsEventData.CODEC);
@@ -53,16 +66,12 @@ public class DungeonsPage extends InteractiveCustomUIPage<DungeonsPage.DungeonsE
             @Nonnull UIEventBuilder eventBuilder,
             @Nonnull Store<EntityStore> store
     ) {
-        // Load the base layout (the server resolves Pages/... from Common/UI/Custom/Pages)
         commandBuilder.append("Pages/DungeonsPage.ui");
 
-        // Populate header
         commandBuilder.set("#HeaderTitle.Text", "Dungeons");
 
-        // Build the list using a separate entry template (Pages/DungeonsEntry.ui)
         buildDungeonList(commandBuilder, eventBuilder, DungeonManager.all());
 
-        // Bind static buttons
         eventBuilder.addEventBinding(
                 CustomUIEventBindingType.Activating,
                 "#CloseButton",
@@ -72,9 +81,8 @@ public class DungeonsPage extends InteractiveCustomUIPage<DungeonsPage.DungeonsE
 
     private void buildDungeonList(@Nonnull UICommandBuilder commandBuilder, @Nonnull UIEventBuilder eventBuilder, @Nonnull List<DungeonDescriptor> dungeons) {
         commandBuilder.clear("#DungeonList");
-
         if (dungeons.isEmpty()) {
-            commandBuilder.appendInline("#DungeonList", "Label { Text: \"No dungeons available\"; Anchor: (Height: 40); Style: (FontSize: 14, TextColor: #6e7da1, HorizontalAlignment: Center, VerticalAlignment: Center); }");
+            commandBuilder.appendInline("#DungeonList", "Label { Text: \"No dungeons available\"; Anchor: (Height: 40); }");
             return;
         }
 
@@ -82,14 +90,11 @@ public class DungeonsPage extends InteractiveCustomUIPage<DungeonsPage.DungeonsE
         for (DungeonDescriptor d : dungeons) {
             String selector = "#DungeonList[" + i + "]";
 
-            // Append the entry template (exactly like the whitelist does)
             commandBuilder.append("#DungeonList", "Pages/DungeonsEntry.ui");
 
-            // Set fields in the appended entry
             commandBuilder.set(selector + " #DungeonName.Text", d.getName());
             commandBuilder.set(selector + " #DungeonSummary.Text", d.getShortDescription());
 
-            // Bind the select button for this entry (do not auto-close, so false)
             eventBuilder.addEventBinding(
                     CustomUIEventBindingType.Activating,
                     selector + " #SelectButton",
@@ -105,7 +110,6 @@ public class DungeonsPage extends InteractiveCustomUIPage<DungeonsPage.DungeonsE
     public void handleDataEvent(@Nonnull Ref<EntityStore> ref, @Nonnull Store<EntityStore> store, @Nonnull DungeonsEventData data) {
         Player player = (Player) store.getComponent(ref, Player.getComponentType());
         if (player == null) return;
-
         if (data.action == null) return;
 
         switch (data.action) {
@@ -114,14 +118,7 @@ public class DungeonsPage extends InteractiveCustomUIPage<DungeonsPage.DungeonsE
                     DungeonDescriptor d = DungeonManager.getById(data.id);
                     if (d != null) {
                         playerRef.sendMessage(Message.raw("Selected dungeon: " + d.getName()));
-
-                        // Update preview image and description WITHOUT refreshing the whole page:
-                        // Uses Background: (TexturePath: "...") on #PreviewImageArea
-                        String texturePath = "Common/Previews/dungeon_" + d.getId() + ".png"; // expected resource path
-                        String description = d.getShortDescription() != null ? d.getShortDescription() : "";
-                        updatePreview(texturePath, description);
-
-                        // Do NOT call refreshPage(ref, store) here — it would rebuild and clear the dynamic preview.
+                        updatePreviewVisibility(d.getId(), d.getShortDescription());
                     } else {
                         playerRef.sendMessage(Message.raw("Dungeon not found: " + data.id));
                     }
@@ -129,7 +126,9 @@ public class DungeonsPage extends InteractiveCustomUIPage<DungeonsPage.DungeonsE
                 break;
 
             case "Close":
-                player.getPageManager().setPage(ref, store, Page.None);
+                try {
+                    player.getPageManager().setPage(ref, store, Page.None);
+                } catch (Throwable ignored) { }
                 break;
 
             default:
@@ -137,27 +136,25 @@ public class DungeonsPage extends InteractiveCustomUIPage<DungeonsPage.DungeonsE
         }
     }
 
-    private void refreshPage(Ref<EntityStore> ref, Store<EntityStore> store) {
-        UICommandBuilder commandBuilder = new UICommandBuilder();
-        UIEventBuilder eventBuilder = new UIEventBuilder();
-        buildDungeonList(commandBuilder, eventBuilder, DungeonManager.all());
-        this.sendUpdate(commandBuilder, eventBuilder, false);
-    }
-    private void updatePreview(String texturePath, String description) {
+    private void updatePreviewVisibility(@Nullable String dungeonId, @Nullable String description) {
         UICommandBuilder cmd = new UICommandBuilder();
 
-        // Try two common formats so it works across server builds:
-        // 1) Set the Background object as a serialized value
-        cmd.set("#PreviewImageArea.Background", "(TexturePath: \"" + texturePath + "\")");
+        // hide all
+        for (String controlId : PREVIEW_IDS.values()) {
+            cmd.set("#" + controlId + ".Visible", false);
+            cmd.set("#PreviewImageArea #" + controlId + ".Visible", false);
+        }
 
-        // 2) (fallback) set the nested TexturePath field directly
-        cmd.set("#PreviewImageArea.Background.TexturePath", texturePath);
+        // show mapped (if any)
+        if (dungeonId != null) {
+            String controlId = PREVIEW_IDS.get(dungeonId);
+            if (controlId != null) {
+                cmd.set("#" + controlId + ".Visible", true);
+                cmd.set("#PreviewImageArea #" + controlId + ".Visible", true);
+            }
+        }
 
-        // Set the preview description text
-        cmd.set("#PreviewDescription.Text", description);
-
-        // Send the update to the client
-        // This method exists on InteractiveCustomUIPage
+        cmd.set("#PreviewDescription.Text", description != null ? description : "");
         this.sendUpdate(cmd);
     }
 }

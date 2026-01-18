@@ -20,7 +20,6 @@ Group {
 
   Group { LayoutMode: Left; Anchor: (Height: 320);
 
-    /* Left column: list of dungeons (fixed height, scrollable like whitelist) */
     Group {
       Anchor: (Width: 340);
       LayoutMode: Top;
@@ -35,7 +34,6 @@ Group {
       }
     }
 
-    /* Right column: preview area - expands to fill remaining width */
     Group {
       FlexWeight: 1;
       LayoutMode: Top;
@@ -45,6 +43,25 @@ Group {
       Group #PreviewImageArea {
         Anchor: (Height: 220);
         Background: #000000(0.06);
+
+        Group #PreviewD1 {
+          Anchor: (Height: 220);
+          Background: (TexturePath: "dungeon_d1.png");
+          Visible: false;
+        }
+
+        Group #PreviewD2 {
+          Anchor: (Height: 220);
+          Background: (TexturePath: "dungeon_d2.png");
+          Visible: false;
+        }
+
+        Group #PreviewD3 {
+          Anchor: (Height: 220);
+          Background: (TexturePath: "dungeon_d3.png");
+          Visible: false;
+        }
+
       }
 
       Label #PreviewDescription {
