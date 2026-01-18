@@ -1,0 +1,56 @@
+Group #ScoreboardRoot {
+  // Anchor: Right 6px from edge, Top N px (adjust Top to move vertically).
+  // Set Top to a value that visually centers the HUD in your resolution.
+  Anchor: (Right: 6, Top: 220);
+  LayoutMode: Top;
+  Padding: (Full: 0);
+
+  // Outer box acts as the outline/border (opaque). We give it a small padding so inner
+  // transparent area is inset, creating the "outlined box with transparent center" effect.
+  Group #ScoreboardOutline {
+    Anchor: (Width: 220);
+    LayoutMode: Top;
+    Padding: (Full: 2);               // thickness of the border
+    Background: #000000(0.65);       // border color and opacity (adjust alpha)
+    // No explicit Height so it sizes to children + padding
+  }
+
+  // Inner group is placed inside the outline; it is transparent so the interior is see-through.
+  Group #ScoreboardInner {
+    Anchor: (Width: 214);            // slightly smaller than outline width (outline padding applied)
+    LayoutMode: Top;
+    Padding: (Full: 6);
+    Background: #000000(0.0);       // fully transparent interior
+  }
+
+  // The actual labels — placed inside ScoreboardInner by nesting order.
+  Label #Title {
+    Text: "Scoreboard";
+    Anchor: (Height: 22);
+    Style: (FontSize: 14, TextColor: #ffffff, RenderBold: true);
+  }
+
+  Label #Line1 {
+    Text: "Money: 0";
+    Anchor: (Height: 18);
+    Style: (TextColor: #cccccc);
+  }
+
+  Label #Line2 {
+    Text: "Shards: 0";
+    Anchor: (Height: 18);
+    Style: (TextColor: #cccccc);
+  }
+
+  Label #Line3 {
+    Text: "Kills: 0";
+    Anchor: (Height: 18);
+    Style: (TextColor: #cccccc);
+  }
+
+  Label #Line4 {
+    Text: "Playtime: 0m";
+    Anchor: (Height: 18);
+    Style: (TextColor: #cccccc);
+  }
+}
