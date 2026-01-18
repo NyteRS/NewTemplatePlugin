@@ -1,3 +1,9 @@
+@PrimaryButtonStyle = TextButtonStyle(
+  Default: (Background: #3a7bd5, LabelStyle: (FontSize: 13, TextColor: #ffffff, RenderBold: true, HorizontalAlignment: Center, VerticalAlignment: Center)),
+  Hovered: (Background: #4a8be5, LabelStyle: (FontSize: 13, TextColor: #ffffff, RenderBold: true, HorizontalAlignment: Center, VerticalAlignment: Center)),
+  Pressed: (Background: #2a6bc5, LabelStyle: (FontSize: 13, TextColor: #ffffff, RenderBold: true, HorizontalAlignment: Center, VerticalAlignment: Center))
+);
+
 Group {
   Anchor: (Width: 700, Height: 420);
   Background: #141c26(0.98);
@@ -12,51 +18,52 @@ Group {
 
   Group { Anchor: (Height: 8); }
 
-  Group {
-    LayoutMode: Left;
-    Anchor: (Height: 320);
+  Group { LayoutMode: Left; Anchor: (Height: 320);
 
+    /* Left column: list of dungeons (fixed height, scrollable like whitelist) */
     Group {
-      Anchor: (Width: 300);
+      Anchor: (Width: 340);
       LayoutMode: Top;
 
       Label { Text: "Available Dungeons"; Anchor: (Height: 24); Style: (FontSize: 14, TextColor: #cccccc); }
 
-      /* Parser-safe list container: no Fill usage */
       Group #DungeonList {
-        LayoutMode: Top;
-        /* If you want this to take the vertical space, make parent children combine with explicit sizes or use FlexWeight on siblings */
+        Anchor: (Height: 260);
+        LayoutMode: TopScrolling;
+        Background: #0a1119(0.5);
+        Padding: (Full: 6);
       }
     }
 
+    /* Right column: preview area - expands to fill remaining width */
     Group {
-      /* Use FlexWeight to take remaining horizontal space instead of Anchor Fill */
       FlexWeight: 1;
       LayoutMode: Top;
 
       Label { Text: "Preview"; Anchor: (Height: 24); Style: (FontSize: 14, TextColor: #cccccc); }
 
-      Group #PreviewImageArea { Anchor: (Height: 180); Background: #000000(0.06); }
+      Group #PreviewImageArea {
+        Anchor: (Height: 220);
+        Background: #000000(0.06);
+      }
 
       Label #PreviewDescription {
         Text: "Select a dungeon to see details";
+        Anchor: (Height: 36);
         Style: (FontSize: 13, TextColor: #aaaaaa);
-        Anchor: (Height: 24);
       }
     }
   }
 
   Group { Anchor: (Height: 12); }
 
-  Group {
-    LayoutMode: Left;
-    Anchor: (Height: 36);
-
+  Group { LayoutMode: Left; Anchor: (Height: 36);
     Group { FlexWeight: 1; }
 
     TextButton #CloseButton {
       Text: "Close";
       Anchor: (Width: 120, Height: 28);
+      Style: @PrimaryButtonStyle;
     }
   }
 }

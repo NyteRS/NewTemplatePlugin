@@ -114,8 +114,14 @@ public class DungeonsPage extends InteractiveCustomUIPage<DungeonsPage.DungeonsE
                     DungeonDescriptor d = DungeonManager.getById(data.id);
                     if (d != null) {
                         playerRef.sendMessage(Message.raw("Selected dungeon: " + d.getName()));
-                        // TODO: instance creation / teleport / party checks
-                        refreshPage(ref, store);
+
+                        // Update preview image and description WITHOUT refreshing the whole page:
+                        // Uses Background: (TexturePath: "...") on #PreviewImageArea
+                        String texturePath = "Common/Previews/dungeon_" + d.getId() + ".png"; // expected resource path
+                        String description = d.getShortDescription() != null ? d.getShortDescription() : "";
+                        updatePreview(texturePath, description);
+
+                        // Do NOT call refreshPage(ref, store) here — it would rebuild and clear the dynamic preview.
                     } else {
                         playerRef.sendMessage(Message.raw("Dungeon not found: " + data.id));
                     }
@@ -136,5 +142,22 @@ public class DungeonsPage extends InteractiveCustomUIPage<DungeonsPage.DungeonsE
         UIEventBuilder eventBuilder = new UIEventBuilder();
         buildDungeonList(commandBuilder, eventBuilder, DungeonManager.all());
         this.sendUpdate(commandBuilder, eventBuilder, false);
+    }
+    private void updatePreview(String texturePath, String description) {
+        UICommandBuilder cmd = new UICommandBuilder();
+
+        // Try two common formats so it works across server builds:
+        // 1) Set the Background object as a serialized value
+        cmd.set("#PreviewImageArea.Background", "(TexturePath: \"" + texturePath + "\")");
+
+        // 2) (fallback) set the nested TexturePath field directly
+        cmd.set("#PreviewImageArea.Background.TexturePath", texturePath);
+
+        // Set the preview description text
+        cmd.set("#PreviewDescription.Text", description);
+
+        // Send the update to the client
+        // This method exists on InteractiveCustomUIPage
+        this.sendUpdate(cmd);
     }
 }

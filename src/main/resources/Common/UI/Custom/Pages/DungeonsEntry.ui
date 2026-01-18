@@ -1,8 +1,9 @@
 Group {
   LayoutMode: Left;
-  Anchor: (Height: 48);
+  Anchor: (Height: 56);
   Padding: (Full: 6);
 
+  /* Left: labels stacked */
   Group {
     FlexWeight: 1;
     LayoutMode: Top;
@@ -10,18 +11,22 @@ Group {
     Label #DungeonName {
       Text: "Dungeon name";
       Anchor: (Height: 20);
-      Style: (FontSize: 14, TextColor: #ffffff, RenderBold: true, VerticalAlignment: Center);
+      Style: (FontSize: 13, TextColor: #ffffff, RenderBold: true, VerticalAlignment: Center);
     }
 
     Label #DungeonSummary {
       Text: "Summary";
-      Anchor: (Height: 16);
-      Style: (FontSize: 12, TextColor: #bfc9d9);
+      Anchor: (Height: 18);
+      Style: (FontSize: 11, TextColor: #bfc9d9);
     }
   }
 
+  /* Small spacer */
+  Group { Anchor: (Width: 8); }
+
+  /* Select button (explicit width so labels don't overlap it) */
   TextButton #SelectButton {
     Text: "Select";
-    Anchor: (Width: 100, Height: 28);
+    Anchor: (Width: 86, Height: 32);
   }
 }
