@@ -126,12 +126,12 @@ public final class AutoScoreboardSystem extends RefSystem<EntityStore> {
                         storedTotal = playtimeStore.getTotalMillis(uuid);
                     }
 
-                    hud.setServerName("MyServer");
+                    hud.setServerName("Darkvale");
                     hud.setGold("Gold: 0");
                     hud.setRank("Rank: Member");
                     hud.setPlaytime(formatPlaytime(storedTotal + (System.currentTimeMillis() - joinedMs)));
                     hud.setCoords("Coords: 0, 0, 0");
-                    hud.setFooter("www.example.server");
+                    hud.setFooter("www.darkvale.com");
 
                     hm.setCustomHud(pref, hud);
                     hud.show();

@@ -15,12 +15,13 @@ import javax.annotation.Nonnull;
 public class ScoreboardHud extends CustomUIHud {
     private static final HytaleLogger LOGGER = HytaleLogger.forEnclosingClass();
 
-    private String serverName = "DarkVale";
+    // Default server values updated to Darkvale
+    private String serverName = "Darkvale";
     private String gold = "Gold: 0";
     private String rank = "Rank: Member";
     private String playtime = "Playtime: 0m";
     private String coords = "Coords: 0, 0, 0";
-    private String footer = "www.darkvale.play";
+    private String footer = "www.darkvale.com";
 
     public ScoreboardHud(@Nonnull PlayerRef playerRef) {
         super(playerRef);
@@ -60,7 +61,6 @@ public class ScoreboardHud extends CustomUIHud {
         b.set("#ScoreboardRoot #Coords.Text", coords);
         b.set("#ScoreboardRoot #Footer.Text", footer);
 
-        // incremental update
         update(false, b);
     }
 
