@@ -18,25 +18,33 @@ import com.hypixel.hytale.server.core.universe.world.World;
 import com.hypixel.hytale.server.core.universe.world.storage.EntityStore;
 import com.hypixel.hytale.server.core.HytaleServer;
 
-// Correct UUIDComponent import
+// Correct UUIDComponent import (server core entity package)
 import com.hypixel.hytale.server.core.entity.UUIDComponent;
+
+// LuckPerms API (cached fast-path usage; guarded)
+import net.luckperms.api.LuckPerms;
+import net.luckperms.api.LuckPermsProvider;
+import net.luckperms.api.model.user.User;
 
 import javax.annotation.Nonnull;
 import java.lang.reflect.Method;
 import java.util.Map;
 import java.util.UUID;
-import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Consumer;
 
 /**
- * AutoScoreboardSystem — reflection-safe LuckPerms integration.
+ * AutoScoreboardSystem — cached-only LuckPerms integration + event-driven updates.
  *
- * This class avoids direct references to net.luckperms.api.* to prevent NoClassDefFoundError
- * when the LuckPerms API isn't present on the plugin classpath. If LuckPerms is available
- * at runtime, we use reflection to call the provider, user manager, getUser/loadUser and
- * read primary group.
+ * - Uses cached getUser(...) only; does not call loadUser(...)
+ * - Periodic cheap checks update HUD only when rank text changes
+ * - Registers a LuckPerms UserDataRecalculateEvent listener reflectively (so plugin won't NoClassDefFoundError
+ *   if LP API isn't visible to plugin classloader). The reflectively-handled event will update HUD immediately
+ *   for affected players.
+ *
+ * Note: PlaytimeStore, ScoreboardHud and other referenced classes are assumed present elsewhere in the project.
  */
 public final class AutoScoreboardSystem extends RefSystem<EntityStore> {
     private static final HytaleLogger LOGGER = HytaleLogger.forEnclosingClass();
@@ -44,6 +52,8 @@ public final class AutoScoreboardSystem extends RefSystem<EntityStore> {
     private final Map<Ref<EntityStore>, ScheduledFuture<?>> updaters = new ConcurrentHashMap<>();
     private final Map<Ref<EntityStore>, Long> joinTimestamps = new ConcurrentHashMap<>();
     private final Map<Ref<EntityStore>, UUID> refToUuid = new ConcurrentHashMap<>();
+    private final Map<Ref<EntityStore>, String> lastKnownRank = new ConcurrentHashMap<>();
+
     private final PlaytimeStore playtimeStore = new PlaytimeStore();
 
     private static final long REFRESH_PERIOD_SECONDS = 1L;
@@ -54,6 +64,9 @@ public final class AutoScoreboardSystem extends RefSystem<EntityStore> {
         } catch (Throwable t) {
             LOGGER.atWarning().withCause(t).log("Failed to load playtime store");
         }
+
+        // Attempt to register LP event listener reflectively (safe if LP classes are missing)
+        tryRegisterLuckPermsEventListener();
     }
 
     @Nonnull
@@ -84,7 +97,7 @@ public final class AutoScoreboardSystem extends RefSystem<EntityStore> {
         if (hudManager == null) return;
         if (hudManager.getCustomHud() instanceof ScoreboardHud) return;
 
-        // Fast-path: try to get UUID from commandBuffer
+        // Fast-path: try to obtain UUID from commandBuffer
         UUID playerUuid = null;
         try {
             UUIDComponent uuidComponent = (UUIDComponent) commandBuffer.getComponent(ref, UUIDComponent.getComponentType());
@@ -103,7 +116,7 @@ public final class AutoScoreboardSystem extends RefSystem<EntityStore> {
                 try {
                     if (!ref.isValid()) return;
 
-                    // Re-check components on world thread
+                    // Re-check components on world thread and ensure UUID present
                     Player p = (Player) store.getComponent(ref, Player.getComponentType());
                     PlayerRef pref = (PlayerRef) store.getComponent(ref, PlayerRef.getComponentType());
                     if (p == null || pref == null) return;
@@ -134,45 +147,39 @@ public final class AutoScoreboardSystem extends RefSystem<EntityStore> {
                     hm.setCustomHud(pref, hud);
                     hud.show();
 
-                    // debug
-                    LOGGER.atInfo().log("[AUTOSCORE] HUD attached for ref=%s uuid=%s", ref, (uuid != null ? uuid.toString() : "null"));
-
-                    // Attempt attach-time LuckPerms resolution via reflection
-                    String initialGroup = tryResolveLuckPermsPrimaryGroupReflective(uuid);
-                    if (initialGroup != null) {
-                        hud.setRank("Rank: " + initialGroup);
-                        hud.refresh();
-                        LOGGER.atInfo().log("[AUTOSCORE] LP fast-path (reflective) resolved for uuid=%s primary=%s", uuid, initialGroup);
-                    } else {
-                        // schedule async reflective load (if possible)
-                        boolean scheduled = tryScheduleAsyncLuckPermsLoadReflective(uuid, (primary) -> {
-                            world.execute(() -> {
-                                try {
-                                    if (!ref.isValid()) return;
-                                    if (hm.getCustomHud() instanceof ScoreboardHud) {
-                                        ScoreboardHud sb = (ScoreboardHud) hm.getCustomHud();
-                                        sb.setRank("Rank: " + primary);
-                                        sb.refresh();
-                                        LOGGER.atInfo().log("[AUTOSCORE] LP async reflective loaded for uuid=%s primary=%s", uuid, primary);
-                                    }
-                                } catch (Throwable t) {
-                                    LOGGER.atWarning().withCause(t).log("[AUTOSCORE] Failed to apply LP loaded user reflectively for uuid=%s", uuid);
+                    // Cached-only LuckPerms fast-path at attach-time (do NOT call loadUser)
+                    String rankText = null;
+                    if (uuid != null) {
+                        try {
+                            LuckPerms lp = LuckPermsProvider.get();
+                            if (lp != null) {
+                                User user = lp.getUserManager().getUser(uuid); // cached only
+                                if (user != null) {
+                                    rankText = buildRankText(user);
+                                    LOGGER.atInfo().log("[AUTOSCORE] LP cached fast-path resolved for uuid=%s primary=%s", uuid, user.getPrimaryGroup());
+                                } else {
+                                    LOGGER.atInfo().log("[AUTOSCORE] LP cached user not available at attach for uuid=%s", uuid);
                                 }
-                            });
-                        });
-                        if (!scheduled) {
-                            // fallback only if we couldn't schedule async load
-                            hud.setRank("Rank: Member");
-                            hud.refresh();
-                            LOGGER.atInfo().log("[AUTOSCORE] Using fallback rank for uuid=%s (LP not present)", uuid);
-                        } else {
-                            // leave fallback out for now; async will update soon
-                            hud.setRank("Rank: Member");
-                            hud.refresh();
+                            } else {
+                                LOGGER.atInfo().log("[AUTOSCORE] LuckPerms provider returned null at attach-time");
+                            }
+                        } catch (NoClassDefFoundError ncdf) {
+                            LOGGER.atWarning().log("[AUTOSCORE] LuckPerms API classes not available to plugin at runtime: %s", ncdf.getClass().getSimpleName());
+                        } catch (Throwable t) {
+                            LOGGER.atWarning().withCause(t).log("[AUTOSCORE] Exception while trying LuckPerms fast-path");
                         }
                     }
 
-                    // schedule periodic refresh (coords/playtime + repeated LP fast checks)
+                    if (rankText == null) {
+                        rankText = "Rank: Member";
+                    }
+
+                    // store and apply initial rank
+                    lastKnownRank.put(ref, rankText);
+                    hud.setRank(rankText);
+                    hud.refresh();
+
+                    // schedule periodic refresh task (coords/playtime + cheap cached LP checks)
                     ScheduledFuture<?> future = HytaleServer.SCHEDULED_EXECUTOR.scheduleAtFixedRate(() -> {
                         world.execute(() -> {
                             try {
@@ -192,10 +199,27 @@ public final class AutoScoreboardSystem extends RefSystem<EntityStore> {
                                 long joinedNow = joinTimestamps.getOrDefault(ref, System.currentTimeMillis());
                                 hud.setPlaytime(formatPlaytime(stored + (System.currentTimeMillis() - joinedNow)));
 
-                                // attempt quick reflective fast-path each tick (only if LP exists)
-                                String pg = tryResolveLuckPermsPrimaryGroupReflective(u);
-                                if (pg != null) hud.setRank("Rank: " + pg);
+                                // Cheap cached-only LP check: only update HUD if the cached primary/prefix changed
+                                if (u != null) {
+                                    try {
+                                        LuckPerms lp = LuckPermsProvider.get();
+                                        if (lp != null) {
+                                            User user = lp.getUserManager().getUser(u); // cached fast-path only
+                                            if (user != null) {
+                                                String newRank = buildRankText(user);
+                                                String last = lastKnownRank.get(ref);
+                                                if (last == null || !last.equals(newRank)) {
+                                                    lastKnownRank.put(ref, newRank);
+                                                    hud.setRank(newRank);
+                                                }
+                                            }
+                                        }
+                                    } catch (Throwable ignore) {
+                                        // ignore LP problems during ticks (we don't want to spam logs here)
+                                    }
+                                }
 
+                                // refresh every tick to update coords/playtime and any applied rank changes
                                 hud.refresh();
                             } catch (Throwable t) {
                                 LOGGER.atWarning().withCause(t).log("[AUTOSCORE] Periodic refresh failed");
@@ -206,92 +230,10 @@ public final class AutoScoreboardSystem extends RefSystem<EntityStore> {
                     updaters.put(ref, future);
 
                 } catch (Throwable t) {
-                    LOGGER.atWarning().withCause(t).log("[AUTOSCORE] Attach exception");
+                    LOGGER.atWarning().withCause(t).log("[AUTOSCORE] Attach sequence exception");
                 }
             });
         }, 350L, TimeUnit.MILLISECONDS);
-    }
-
-    /**
-     * Try to resolve LuckPerms primary group using reflection.
-     * Returns primary group string or null if not available/cached/not present.
-     */
-    private String tryResolveLuckPermsPrimaryGroupReflective(UUID uuid) {
-        if (uuid == null) return null;
-        try {
-            // Check provider class exists
-            Class<?> providerClass = Class.forName("net.luckperms.api.LuckPermsProvider");
-            Method getMethod = providerClass.getMethod("get");
-            Object lpInstance = getMethod.invoke(null); // static get()
-            if (lpInstance == null) return null;
-
-            Method getUserManagerMethod = lpInstance.getClass().getMethod("getUserManager");
-            Object userManager = getUserManagerMethod.invoke(lpInstance);
-            if (userManager == null) return null;
-
-            Method getUserMethod = userManager.getClass().getMethod("getUser", UUID.class);
-            Object user = getUserMethod.invoke(userManager, uuid);
-            if (user == null) return null;
-
-            Method getPrimary = user.getClass().getMethod("getPrimaryGroup");
-            Object primary = getPrimary.invoke(user);
-            if (primary instanceof String) return (String) primary;
-            return null;
-        } catch (ClassNotFoundException cnf) {
-            // LuckPerms not present; expected in some setups
-            return null;
-        } catch (Throwable t) {
-            LOGGER.atWarning().withCause(t).log("[AUTOSCORE] Reflection LP fast-path error for uuid=%s", uuid);
-            return null;
-        }
-    }
-
-    /**
-     * Try to schedule loadUser(uuid) reflectively. If scheduling succeeded returns true.
-     * The consumer will be invoked with primary group string when loaded.
-     */
-    private boolean tryScheduleAsyncLuckPermsLoadReflective(UUID uuid, java.util.function.Consumer<String> onLoaded) {
-        if (uuid == null) return false;
-        try {
-            Class<?> providerClass = Class.forName("net.luckperms.api.LuckPermsProvider");
-            Method getMethod = providerClass.getMethod("get");
-            Object lpInstance = getMethod.invoke(null);
-            if (lpInstance == null) return false;
-
-            Method getUserManagerMethod = lpInstance.getClass().getMethod("getUserManager");
-            Object userManager = getUserManagerMethod.invoke(lpInstance);
-            if (userManager == null) return false;
-
-            Method loadUserMethod = userManager.getClass().getMethod("loadUser", UUID.class);
-            Object futureObj = loadUserMethod.invoke(userManager, uuid);
-            if (!(futureObj instanceof CompletableFuture)) {
-                // Might be some other future type; attempt to handle common case only
-                return false;
-            }
-            @SuppressWarnings("unchecked")
-            CompletableFuture<Object> future = (CompletableFuture<Object>) futureObj;
-            future.thenAccept(loadedUser -> {
-                try {
-                    if (loadedUser == null) return;
-                    Method getPrimary = loadedUser.getClass().getMethod("getPrimaryGroup");
-                    Object primary = getPrimary.invoke(loadedUser);
-                    if (primary instanceof String) {
-                        onLoaded.accept((String) primary);
-                    }
-                } catch (Throwable t) {
-                    LOGGER.atWarning().withCause(t).log("[AUTOSCORE] Reflection: failed to read primary from loaded user for uuid=%s", uuid);
-                }
-            }).exceptionally(exc -> {
-                LOGGER.atWarning().withCause(exc).log("[AUTOSCORE] Reflection: loadUser failed for uuid=%s", uuid);
-                return null;
-            });
-            return true;
-        } catch (ClassNotFoundException cnf) {
-            return false;
-        } catch (Throwable t) {
-            LOGGER.atWarning().withCause(t).log("[AUTOSCORE] Reflection: schedule loadUser error for uuid=%s", uuid);
-            return false;
-        }
     }
 
     @Override
@@ -304,6 +246,8 @@ public final class AutoScoreboardSystem extends RefSystem<EntityStore> {
         ScheduledFuture<?> fut = updaters.remove(ref);
         if (fut != null) fut.cancel(false);
 
+        lastKnownRank.remove(ref);
+
         try {
             UUID uuid = refToUuid.remove(ref);
             Long joined = joinTimestamps.remove(ref);
@@ -313,7 +257,7 @@ public final class AutoScoreboardSystem extends RefSystem<EntityStore> {
                 playtimeStore.save();
             }
         } catch (Throwable t) {
-            LOGGER.atWarning().withCause(t).log("[AUTOSCORE] persist error");
+            LOGGER.atWarning().withCause(t).log("[AUTOSCORE] Failed to persist playtime on remove");
         }
 
         try {
@@ -326,7 +270,31 @@ public final class AutoScoreboardSystem extends RefSystem<EntityStore> {
                 }
             }
         } catch (Throwable t) {
-            LOGGER.atWarning().withCause(t).log("[AUTOSCORE] cleanup error");
+            LOGGER.atWarning().withCause(t).log("[AUTOSCORE] Cleanup exception");
+        }
+    }
+
+    /**
+     * Build the rank text to display on the HUD from a LuckPerms User.
+     * Prefer cached prefix (if present) then append the primary group for clarity.
+     */
+    private static String buildRankText(@Nonnull User user) {
+        try {
+            String primary = user.getPrimaryGroup();
+            String prefix = null;
+            try {
+                if (user.getCachedData() != null && user.getCachedData().getMetaData() != null) {
+                    prefix = user.getCachedData().getMetaData().getPrefix();
+                }
+            } catch (Throwable ignored) { }
+
+            if (prefix != null && !prefix.isBlank()) {
+                return "Rank: " + prefix + " " + primary;
+            } else {
+                return "Rank: " + primary;
+            }
+        } catch (Throwable t) {
+            return "Rank: Member";
         }
     }
 
@@ -338,6 +306,160 @@ public final class AutoScoreboardSystem extends RefSystem<EntityStore> {
             return String.format("Playtime: %dh %dm", hours, minutes);
         } else {
             return String.format("Playtime: %dm", Math.max(0L, minutes));
+        }
+    }
+
+    // ---------------------------------------------------------------------
+    // Reflection-based registration for LuckPerms UserDataRecalculateEvent
+    // ---------------------------------------------------------------------
+    private void tryRegisterLuckPermsEventListener() {
+        try {
+            Class<?> providerClass = Class.forName("net.luckperms.api.LuckPermsProvider");
+            Method getMethod = providerClass.getMethod("get");
+            Object lpInstance = getMethod.invoke(null);
+            if (lpInstance == null) {
+                LOGGER.atInfo().log("[AUTOSCORE] LuckPerms provider.get() returned null when registering event listener");
+                return;
+            }
+
+            Method getEventBus = lpInstance.getClass().getMethod("getEventBus");
+            Object eventBus = getEventBus.invoke(lpInstance);
+            if (eventBus == null) {
+                LOGGER.atInfo().log("[AUTOSCORE] LuckPerms EventBus not available");
+                return;
+            }
+
+            Class<?> eventClass = Class.forName("net.luckperms.api.event.user.UserDataRecalculateEvent");
+
+            Consumer<Object> consumer = new Consumer<>() {
+                @Override
+                public void accept(Object event) {
+                    try {
+                        handleUserDataRecalculateEventReflective(event);
+                    } catch (Throwable t) {
+                        LOGGER.atWarning().withCause(t).log("[AUTOSCORE] Error in LP event consumer");
+                    }
+                }
+            };
+
+            Method subscribe = eventBus.getClass().getMethod("subscribe", Class.class, Consumer.class);
+            subscribe.invoke(eventBus, eventClass, consumer);
+
+            LOGGER.atInfo().log("[AUTOSCORE] Registered LuckPerms UserDataRecalculateEvent listener (reflective)");
+        } catch (ClassNotFoundException cnf) {
+            LOGGER.atInfo().log("[AUTOSCORE] LuckPerms event classes not present; skipping event registration");
+        } catch (Throwable t) {
+            LOGGER.atWarning().withCause(t).log("[AUTOSCORE] Failed to register LuckPerms event listener reflectively");
+        }
+    }
+
+    /**
+     * Reflectively inspect the UserDataRecalculateEvent and update HUDs for the affected UUID.
+     */
+    private void handleUserDataRecalculateEventReflective(Object event) {
+        if (event == null) return;
+        try {
+            Method getUser = event.getClass().getMethod("getUser");
+            Object user = getUser.invoke(event);
+            if (user == null) return;
+
+            // Resolve UUID (try multiple method names)
+            UUID uuidLocal = null;
+            try {
+                Method getUniqueId = user.getClass().getMethod("getUniqueId");
+                Object idObj = getUniqueId.invoke(user);
+                if (idObj instanceof UUID) uuidLocal = (UUID) idObj;
+            } catch (NoSuchMethodException ns) {
+                try {
+                    Method alt = user.getClass().getMethod("getUuid");
+                    Object idObj = alt.invoke(user);
+                    if (idObj instanceof UUID) uuidLocal = (UUID) idObj;
+                } catch (Throwable ignored) {}
+            } catch (Throwable ignored) {}
+
+            // getPrimaryGroup()
+            String primaryLocal = null;
+            try {
+                Method getPrimary = user.getClass().getMethod("getPrimaryGroup");
+                Object primObj = getPrimary.invoke(user);
+                if (primObj instanceof String) primaryLocal = (String) primObj;
+            } catch (Throwable ignored) {}
+
+            // get prefix via cachedData -> getMetaData -> getPrefix
+            String prefixLocal = null;
+            try {
+                Method getCached = user.getClass().getMethod("getCachedData");
+                Object cached = getCached.invoke(user);
+                if (cached != null) {
+                    Method getMeta = cached.getClass().getMethod("getMetaData");
+                    Object meta = getMeta.invoke(cached);
+                    if (meta != null) {
+                        Method getPrefix = meta.getClass().getMethod("getPrefix");
+                        Object prefObj = getPrefix.invoke(meta);
+                        if (prefObj instanceof String) prefixLocal = (String) prefObj;
+                    }
+                }
+            } catch (Throwable ignored) {}
+
+            if (uuidLocal == null) return;
+
+            final UUID uuid = uuidLocal;
+            final String primary = primaryLocal;
+            final String prefix = prefixLocal;
+
+            final String rankText;
+            if (primary != null) {
+                if (prefix != null && !prefix.isBlank()) {
+                    rankText = "Rank: " + prefix + " " + primary;
+                } else {
+                    rankText = "Rank: " + primary;
+                }
+            } else {
+                rankText = "Rank: Member";
+            }
+
+            // Find matching attached refs and update their HUDs
+            for (Map.Entry<Ref<EntityStore>, UUID> e : refToUuid.entrySet()) {
+                final Ref<EntityStore> ref = e.getKey();
+                final UUID mappedUuid = e.getValue();
+                if (!uuid.equals(mappedUuid)) continue;
+
+                try {
+                    final Store<EntityStore> store = ref.getStore();
+                    if (store == null) continue;
+                    final EntityStore external = (EntityStore) store.getExternalData();
+                    if (external == null) continue;
+                    final World world = external.getWorld();
+                    if (world == null) continue;
+
+                    world.execute(() -> {
+                        try {
+                            if (!ref.isValid()) return;
+                            final Store<EntityStore> s = ref.getStore();
+                            if (s == null) return;
+                            Player p = (Player) s.getComponent(ref, Player.getComponentType());
+                            PlayerRef pref = (PlayerRef) s.getComponent(ref, PlayerRef.getComponentType());
+                            if (p == null || pref == null) return;
+                            HudManager hm = p.getHudManager();
+                            if (hm == null) return;
+                            if (hm.getCustomHud() instanceof ScoreboardHud) {
+                                ScoreboardHud sb = (ScoreboardHud) hm.getCustomHud();
+                                String last = lastKnownRank.get(ref);
+                                if (last == null || !last.equals(rankText)) {
+                                    lastKnownRank.put(ref, rankText);
+                                    sb.setRank(rankText);
+                                    sb.refresh();
+                                    LOGGER.atInfo().log("[AUTOSCORE] Applied LP event update for uuid=%s newRank=%s", uuid, rankText);
+                                }
+                            }
+                        } catch (Throwable t) {
+                            LOGGER.atWarning().withCause(t).log("[AUTOSCORE] Failed to apply LP event update for uuid=%s", uuid);
+                        }
+                    });
+                } catch (Throwable ignore) { /* swallow */ }
+            }
+        } catch (Throwable t) {
+            LOGGER.atWarning().withCause(t).log("[AUTOSCORE] Error handling UserDataRecalculateEvent reflectively");
         }
     }
 }

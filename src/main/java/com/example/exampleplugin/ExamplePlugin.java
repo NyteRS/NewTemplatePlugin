@@ -39,9 +39,9 @@ public class ExamplePlugin extends JavaPlugin {
         registry.registerSystem(new BleedSystems.BleedOnDamage());
 
         // Commands
+        this.getCommandRegistry().registerCommand(new TestRankCommand());
         this.getCommandRegistry().registerCommand(new DungeonUICommand());
         this.getCommandRegistry().registerCommand(new ScoreboardCommand());
-        this.getCommandRegistry().registerCommand(new ExampleCommand(this.getName(), this.getManifest().getVersion().toString()));
 
         // Register persistent / ticking systems on the entity-store registry (per-world)
         // AutoScoreboardSystem handles HUD updates

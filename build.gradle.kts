@@ -22,6 +22,7 @@ dependencies {
     compileOnly(libs.jetbrains.annotations)
     compileOnly(libs.jspecify)
     compileOnly(files("libs/luckperms-api.jar"))
+    compileOnly("net.luckperms:api:5.4")
 
     if (hytaleAssets.exists()) {
         compileOnly(files(hytaleAssets))
