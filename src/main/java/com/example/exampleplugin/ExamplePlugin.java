@@ -12,16 +12,20 @@ import com.hypixel.hytale.server.core.universe.world.storage.EntityStore;
 import com.hypixel.hytale.server.core.universe.PlayerRef;
 import com.hypixel.hytale.server.core.entity.entities.Player;
 import com.hypixel.hytale.server.core.HytaleServer;
+import me.davidhenk.simpledebuginfohud.command.DebugCommand;
+import me.davidhenk.simpledebuginfohud.data.DebugManager;
+import me.davidhenk.simpledebuginfohud.hud.DebugHudSystem;
 
 import javax.annotation.Nonnull;
 import java.util.concurrent.TimeUnit;
+import java.util.logging.Level;
 
 /**
  * Main plugin entry. Registers systems (including BleedSystems) and attaches scoreboard on PlayerReady.
  */
 public class ExamplePlugin extends JavaPlugin {
     private static final HytaleLogger LOGGER = HytaleLogger.forEnclosingClass();
-
+    private DebugManager debugManager;
     public ExamplePlugin(JavaPluginInit init) {
         super(init);
         LOGGER.atInfo().log("Starting %s v%s", this.getName(), this.getManifest().getVersion().toString());
@@ -34,7 +38,11 @@ public class ExamplePlugin extends JavaPlugin {
 
         // Example existing registration
         registry.registerSystem(new LifestealSystems.LifestealOnDamage());
-
+        this.debugManager = new DebugManager();
+        this.getEntityStoreRegistry().registerSystem(new DebugHudSystem(this.debugManager));
+        this.getCommandRegistry().registerCommand(new DebugCommand(this, this.debugManager));
+        this.getLogger().at(Level.INFO).log("Simple Debug Info HUD Plugin loaded successfully!");
+        this.getLogger().at(Level.INFO).log("Use /debug to toggle the debug HUD.");
         // Register bleed damage event handler so dagger hits add bleed stacks
         registry.registerSystem(new BleedSystems.BleedOnDamage());
 

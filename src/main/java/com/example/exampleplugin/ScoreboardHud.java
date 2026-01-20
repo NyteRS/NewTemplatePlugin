@@ -1,5 +1,3 @@
-/* ScoreboardHud — changed cached fields to volatile for safer cross-thread visibility */
-
 package com.example.exampleplugin;
 
 import com.hypixel.hytale.logger.HytaleLogger;
@@ -13,6 +11,9 @@ import javax.annotation.Nonnull;
  * ScoreboardHud — asset-driven HUD that appends Pages/Scoreboard.ui and exposes simple setters.
  *
  * Use setServerName / setGold / setRank / setPlaytime / setCoords / setFooter then call refresh() to update.
+ *
+ * Fields are volatile to make cross-thread visibility safer when values are updated from other threads,
+ * but all HUD writes should still be performed on the player's world thread.
  */
 public class ScoreboardHud extends CustomUIHud {
     private static final HytaleLogger LOGGER = HytaleLogger.forEnclosingClass();
@@ -53,6 +54,9 @@ public class ScoreboardHud extends CustomUIHud {
 
     /**
      * Incremental update of the text fields. Call after modifying fields above.
+     *
+     * Note: refresh must be called on the player's current world thread or after ensuring the PlayerRef's
+     * packet handler is available. Callers should wrap refresh via world.execute(...) for the current world.
      */
     public void refresh() {
         UICommandBuilder b = new UICommandBuilder();

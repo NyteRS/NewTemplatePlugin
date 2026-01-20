@@ -39,13 +39,12 @@ import java.util.function.Consumer;
 /**
  * AutoScoreboardSystem — cached-only LuckPerms integration + permission-node fallback and event-driven updates.
  *
- * - Uses cached getUser(...) only; does not call loadUser(...)
- * - Periodic cheap checks update HUD only when rank text changes
- * - If LuckPerms API or cached data is unavailable, uses permission-node checks on the Player as a fallback
- *   (configurable list of nodes -> rank display).
- * - Registers a LuckPerms UserDataRecalculateEvent listener reflectively (so plugin won't NoClassDefFoundError
- *   if LP API isn't visible to plugin classloader). The reflectively-handled event will update HUD immediately
- *   for affected players.
+ * Behavior improvements:
+ * - On each periodic tick we resolve the current Store/World/Player/PlayerRef and run updates on that world's thread.
+ * - If the HUD is attached but bound to a different PlayerRef (e.g. after an instance transfer), we re-create and attach
+ *   a new ScoreboardHud for the current PlayerRef, copying server-side cached values rather than relying on old instance.
+ * - Periodic updaters cancel themselves when the player or HUD is no longer present.
+ * - All hud.show()/hud.refresh() calls are guarded with safe checks to avoid NullPointerExceptions when the player is mid-transfer.
  */
 public final class AutoScoreboardSystem extends RefSystem<EntityStore> {
     private static final HytaleLogger LOGGER = HytaleLogger.forEnclosingClass();
@@ -124,6 +123,7 @@ public final class AutoScoreboardSystem extends RefSystem<EntityStore> {
         World world = external.getWorld();
 
         HytaleServer.SCHEDULED_EXECUTOR.schedule(() -> {
+            // initial attach must run on the player's world thread
             world.execute(() -> {
                 try {
                     if (!ref.isValid()) return;
@@ -157,14 +157,24 @@ public final class AutoScoreboardSystem extends RefSystem<EntityStore> {
                     hud.setFooter("www.darkvale.com");
 
                     hm.setCustomHud(pref, hud);
-                    hud.show();
+
+                    // hud.show() may attempt a write; guard it
+                    try {
+                        if (pref.getPacketHandler() != null) {
+                            hud.show();
+                        } else {
+                            LOGGER.atInfo().log("[AUTOSCORE] packetHandler null on initial attach; skipping hud.show()");
+                        }
+                    } catch (Throwable t) {
+                        LOGGER.atWarning().withCause(t).log("[AUTOSCORE] hud.show() threw during attach");
+                    }
 
                     // 1) Try LuckPerms cached fast-path
                     String rankText = tryLuckPermsCachedRank(uuid);
                     if (rankText != null) {
                         lastKnownRank.put(ref, rankText);
                         hud.setRank(rankText);
-                        hud.refresh();
+                        safeRefreshOnWorld(pref, hud);
                         LOGGER.atInfo().log("[AUTOSCORE] LP cached fast-path resolved for uuid=%s", uuid);
                     } else {
                         // 2) Try permission-node based fallback using Player.hasPermission(...)
@@ -173,14 +183,14 @@ public final class AutoScoreboardSystem extends RefSystem<EntityStore> {
                             rankText = permRank;
                             lastKnownRank.put(ref, rankText);
                             hud.setRank(rankText);
-                            hud.refresh();
+                            safeRefreshOnWorld(pref, hud);
                             LOGGER.atInfo().log("[AUTOSCORE] Permission fallback applied for ref=%s rank=%s", ref, rankText);
                         } else {
                             // final fallback
                             rankText = "Rank: Member";
                             lastKnownRank.put(ref, rankText);
                             hud.setRank(rankText);
-                            hud.refresh();
+                            safeRefreshOnWorld(pref, hud);
                             LOGGER.atInfo().log("[AUTOSCORE] Using fallback rank for uuid=%s", uuid);
                         }
                     }
@@ -214,13 +224,80 @@ public final class AutoScoreboardSystem extends RefSystem<EntityStore> {
 
                                     // Re-fetch live components from the current store
                                     Player pNow = (Player) curStore.getComponent(ref, Player.getComponentType());
-                                    if (pNow == null) return;
                                     PlayerRef prefNow = (PlayerRef) curStore.getComponent(ref, PlayerRef.getComponentType());
-                                    HudManager hmNow = pNow.getHudManager();
-                                    if (hmNow == null) return;
-                                    if (!(hmNow.getCustomHud() instanceof ScoreboardHud)) return;
+                                    if (pNow == null || prefNow == null) {
+                                        // Player missing on this ref — cancel periodic updates
+                                        ScheduledFuture<?> fut = updaters.remove(ref);
+                                        if (fut != null) fut.cancel(false);
+                                        return;
+                                    }
 
-                                    ScoreboardHud hudNow = (ScoreboardHud) hmNow.getCustomHud();
+                                    if (pNow.wasRemoved()) {
+                                        ScheduledFuture<?> fut = updaters.remove(ref);
+                                        if (fut != null) fut.cancel(false);
+                                        return;
+                                    }
+
+                                    HudManager hmNow = pNow.getHudManager();
+                                    if (hmNow == null) {
+                                        ScheduledFuture<?> fut = updaters.remove(ref);
+                                        if (fut != null) fut.cancel(false);
+                                        return;
+                                    }
+
+                                    // If HUD is not a ScoreboardHud or is a ScoreboardHud bound to a different PlayerRef, re-create it
+                                    boolean recreateHud = false;
+                                    ScoreboardHud hudNow = null;
+                                    if (!(hmNow.getCustomHud() instanceof ScoreboardHud)) {
+                                        recreateHud = true;
+                                    } else {
+                                        hudNow = (ScoreboardHud) hmNow.getCustomHud();
+                                        // If the attached hud's PlayerRef doesn't match the current PlayerRef, recreate
+                                        try {
+                                            PlayerRef attachedRef = hudNow.getPlayerRef();
+                                            if (attachedRef == null || attachedRef != prefNow) {
+                                                recreateHud = true;
+                                            }
+                                        } catch (Throwable ignored) {
+                                            recreateHud = true;
+                                        }
+                                    }
+
+                                    if (recreateHud) {
+                                        // Create a fresh HUD bound to the current PlayerRef and copy cached server-side values
+                                        ScoreboardHud newHud = new ScoreboardHud(prefNow);
+
+                                        UUID u = refToUuid.get(ref);
+                                        long stored = (u != null) ? playtimeStore.getTotalMillis(u) : 0L;
+                                        long joinedNow = joinTimestamps.getOrDefault(ref, System.currentTimeMillis());
+
+                                        newHud.setServerName("Darkvale");
+                                        newHud.setGold("Gold: 0");
+                                        newHud.setPlaytime(formatPlaytime(stored + (System.currentTimeMillis() - joinedNow)));
+                                        newHud.setCoords("Coords: 0, 0, 0");
+                                        newHud.setFooter("www.darkvale.com");
+
+                                        String lastRank = lastKnownRank.get(ref);
+                                        if (lastRank != null) newHud.setRank(lastRank);
+
+                                        try {
+                                            hmNow.setCustomHud(prefNow, newHud);
+                                            if (prefNow.getPacketHandler() != null) {
+                                                newHud.show();
+                                            } else {
+                                                LOGGER.atInfo().log("[AUTOSCORE] packetHandler null on HUD recreate; skipping show()");
+                                            }
+                                        } catch (Throwable t) {
+                                            LOGGER.atWarning().withCause(t).log("[AUTOSCORE] Failed to attach recreated HUD");
+                                        }
+
+                                        hudNow = newHud;
+                                    }
+
+                                    if (hudNow == null) {
+                                        // Nothing to refresh
+                                        return;
+                                    }
 
                                     // Update coords if transform available
                                     TransformComponent transform = (TransformComponent) curStore.getComponent(ref, TransformComponent.getComponentType());
@@ -261,7 +338,9 @@ public final class AutoScoreboardSystem extends RefSystem<EntityStore> {
                                         hudNow.setRank(newRank);
                                     }
 
-                                    hudNow.refresh();
+                                    // Use safe refresh that checks PlayerRef/PacketHandler and catches exceptions
+                                    safeRefreshOnWorld(prefNow, hudNow);
+
                                 } catch (Throwable t) {
                                     LOGGER.atWarning().withCause(t).log("[AUTOSCORE] Periodic refresh failed");
                                 }
@@ -315,6 +394,30 @@ public final class AutoScoreboardSystem extends RefSystem<EntityStore> {
             }
         } catch (Throwable t) {
             LOGGER.atWarning().withCause(t).log("[AUTOSCORE] Cleanup exception");
+        }
+    }
+
+    /**
+     * Safe refresh helper — checks that the ScoreboardHud's PlayerRef and PacketHandler are available
+     * and wraps refresh in a try/catch to avoid throwing NullReference exceptions when players transfer/disconnect.
+     *
+     * This variant is expected to be called on the target world's thread.
+     */
+    private void safeRefreshOnWorld(PlayerRef pr, ScoreboardHud hud) {
+        if (hud == null || pr == null) return;
+        try {
+            try {
+                if (pr.getPacketHandler() == null) {
+                    // Packet handler not available (player mid-transfer or disconnected)
+                    return;
+                }
+            } catch (Throwable ignored) {
+                // If any introspection fails, skip refresh
+                return;
+            }
+            hud.refresh();
+        } catch (Throwable t) {
+            LOGGER.atWarning().withCause(t).log("[AUTOSCORE] HUD refresh failed");
         }
     }
 
@@ -552,7 +655,7 @@ public final class AutoScoreboardSystem extends RefSystem<EntityStore> {
                                 if (last == null || !last.equals(rankText)) {
                                     lastKnownRank.put(ref, rankText);
                                     sb.setRank(rankText);
-                                    sb.refresh();
+                                    safeRefreshOnWorld(pref, sb);
                                     LOGGER.atInfo().log("[AUTOSCORE] Applied LP event update for uuid=%s newRank=%s", uuid, rankText);
                                 }
                             }
