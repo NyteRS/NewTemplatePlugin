@@ -6,10 +6,12 @@ import com.hypixel.hytale.component.ComponentType;
 import com.hypixel.hytale.component.Ref;
 import com.hypixel.hytale.component.RemoveReason;
 import com.hypixel.hytale.component.Store;
+import com.hypixel.hytale.server.core.entity.UUIDComponent;
 import com.hypixel.hytale.component.query.Query;
 import com.hypixel.hytale.component.system.RefSystem;
 import com.hypixel.hytale.logger.HytaleLogger;
 import com.hypixel.hytale.math.vector.Vector3d;
+import com.hypixel.hytale.server.core.HytaleServer;
 import com.hypixel.hytale.server.core.entity.entities.Player;
 import com.hypixel.hytale.server.core.entity.entities.player.hud.HudManager;
 import com.hypixel.hytale.server.core.io.PacketHandler;
@@ -17,9 +19,6 @@ import com.hypixel.hytale.server.core.modules.entity.component.TransformComponen
 import com.hypixel.hytale.server.core.universe.PlayerRef;
 import com.hypixel.hytale.server.core.universe.world.World;
 import com.hypixel.hytale.server.core.universe.world.storage.EntityStore;
-import com.hypixel.hytale.server.core.HytaleServer;
-
-import com.hypixel.hytale.server.core.entity.UUIDComponent;
 import net.luckperms.api.LuckPerms;
 import net.luckperms.api.LuckPermsProvider;
 import net.luckperms.api.model.user.User;
@@ -36,18 +35,15 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
-import java.util.function.Consumer;
-import java.util.function.Function;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
- * AutoScoreboardSystem — final improved HUD attach that waits for client readiness and world alive.
+ * AutoScoreboardSystem — attaches ScoreboardHud safely and refreshes it periodically.
  *
- * Important attach conditions (all checked just before showing UI):
- *  - ref.isValid() must be true
- *  - world.isAlive() must be true
- *  - player.isWaitingForClientReady() must be false (or client-ready-for-chunks future completed)
- *
- * When polling/waiting we abort if the world becomes not alive or the player ref invalid.
+ * Key changes:
+ * - When attaching we use ScoreboardHud.openFor(player) (which schedules world.execute internally).
+ * - Periodic updates call ScoreboardHud.refreshFor(player) on the world thread.
+ * - All HUD writes are full-document writes (ScoreboardHud.writeHud), minimizing partial updates & races.
  */
 public final class AutoScoreboardSystem extends RefSystem<EntityStore> {
     private static final HytaleLogger LOGGER = HytaleLogger.forEnclosingClass();
@@ -263,7 +259,7 @@ public final class AutoScoreboardSystem extends RefSystem<EntityStore> {
 
     /**
      * Perform the actual HUD attach and schedule periodic updates.
-     * Must be called on world thread.
+     * Must be called on world thread (we execute world.execute(...) before calling attachHudNow).
      */
     private void attachHudNow(@Nonnull Ref<EntityStore> ref, @Nonnull Store<EntityStore> store, long joinTimestampMs, @Nonnull World world) {
         try {
@@ -277,18 +273,14 @@ public final class AutoScoreboardSystem extends RefSystem<EntityStore> {
             PlayerRef pref = (PlayerRef) store.getComponent(ref, PlayerRef.getComponentType());
             if (p == null || pref == null) return;
 
-            // final ready-for-gameplay check
-            if (p.isWaitingForClientReady()) {
-                LOGGER.atInfo().log("[AUTOSCORE] Deferred attach: player still waiting for client ready for ref=%s", ref);
-                return;
-            }
-
             HudManager hm = p.getHudManager();
             if (hm == null) return;
             if (hm.getCustomHud() instanceof ScoreboardHud) return;
 
+            // Create HUD instance (cache values are optional)
             ScoreboardHud hud = new ScoreboardHud(pref);
 
+            // Set initial cached values from playtime / join timestamp
             long storedTotal = 0L;
             UUID uuid = refToUuid.get(ref);
             if (uuid != null) storedTotal = playtimeStore.getTotalMillis(uuid);
@@ -299,24 +291,12 @@ public final class AutoScoreboardSystem extends RefSystem<EntityStore> {
             hud.setCoords("Coords: 0, 0, 0");
             hud.setFooter("www.darkvale.com");
 
-            // attempt to attach
-            boolean attached = false;
+            // Attach and send initial full UI via HUD helper (runs on world thread)
             try {
-                hm.setCustomHud(pref, hud);
-                hud.show();
-                attached = true;
-            } catch (CancellationException ce) {
-                LOGGER.atWarning().withCause(ce).log("[AUTOSCORE] HUD attach canceled for ref=%s; aborting", ref);
-                attached = false;
-            } catch (IllegalStateException ise) {
-                LOGGER.atWarning().withCause(ise).log("[AUTOSCORE] HUD attach illegal state for ref=%s; aborting", ref);
-                attached = false;
+                hud.openFor(p);
             } catch (Throwable t) {
-                LOGGER.atWarning().withCause(t).log("[AUTOSCORE] Exception showing HUD during attach for ref=%s", ref);
-                attached = false;
+                LOGGER.atWarning().withCause(t).log("[AUTOSCORE] Failed to open ScoreboardHud for ref=%s", ref);
             }
-
-            if (!attached) return;
 
             // initial rank resolution (cached LuckPerms or permissions fallback)
             String rankText = null;
@@ -337,24 +317,11 @@ public final class AutoScoreboardSystem extends RefSystem<EntityStore> {
                 rankText = (permRank != null) ? permRank : "Rank: Member";
             }
 
+            // store last known rank and set it on HUD
             lastKnownRank.put(ref, rankText);
             hud.setRank(rankText);
 
-            try {
-                hud.refresh();
-            } catch (CancellationException ce) {
-                LOGGER.atWarning().withCause(ce).log("[AUTOSCORE] HUD refresh canceled immediately after attach for ref=%s; aborting periodic updates", ref);
-                try { hm.setCustomHud(pref, null); } catch (Throwable ignored) {}
-                return;
-            } catch (IllegalStateException ise) {
-                LOGGER.atWarning().withCause(ise).log("[AUTOSCORE] HUD refresh illegal state after attach for ref=%s; aborting periodic updates", ref);
-                try { hm.setCustomHud(pref, null); } catch (Throwable ignored) {}
-                return;
-            } catch (Throwable t) {
-                LOGGER.atWarning().withCause(t).log("[AUTOSCORE] HUD refresh error after attach for ref=%s", ref);
-            }
-
-            // cancel any existing scheduled future for this ref (poll or previous updater)
+            // Schedule periodic updater (runs on world thread via world.execute inside the scheduled task)
             ScheduledFuture<?> existing = updaters.remove(ref);
             if (existing != null) existing.cancel(false);
 
@@ -368,6 +335,7 @@ public final class AutoScoreboardSystem extends RefSystem<EntityStore> {
                             return;
                         }
 
+                        // update coords
                         TransformComponent transform = (TransformComponent) store.getComponent(ref, TransformComponent.getComponentType());
                         if (transform != null) {
                             Vector3d pos = transform.getPosition();
@@ -377,11 +345,13 @@ public final class AutoScoreboardSystem extends RefSystem<EntityStore> {
                                     (int) Math.floor(pos.getZ())));
                         }
 
+                        // update playtime
                         UUID u = refToUuid.get(ref);
                         long stored = (u != null) ? playtimeStore.getTotalMillis(u) : 0L;
                         long joinedNow = joinTimestamps.getOrDefault(ref, System.currentTimeMillis());
                         hud.setPlaytime(formatPlaytime(stored + (System.currentTimeMillis() - joinedNow)));
 
+                        // LuckPerms rank refresh
                         if (u != null) {
                             try {
                                 LuckPerms lp = LuckPermsProvider.get();
@@ -399,14 +369,11 @@ public final class AutoScoreboardSystem extends RefSystem<EntityStore> {
                             } catch (Throwable ignore) {}
                         }
 
+                        // refresh HUD on world thread (this will call update(false, builder) internally)
                         try {
-                            hud.refresh();
+                            hud.refreshFor(p);
                         } catch (CancellationException ce) {
                             LOGGER.atWarning().withCause(ce).log("[AUTOSCORE] HUD refresh canceled during periodic tick for ref=%s; cancelling updater", ref);
-                            ScheduledFuture<?> f = updaters.remove(ref);
-                            if (f != null) f.cancel(false);
-                        } catch (IllegalStateException ise) {
-                            LOGGER.atWarning().withCause(ise).log("[AUTOSCORE] HUD refresh illegal state during periodic tick for ref=%s; cancelling updater", ref);
                             ScheduledFuture<?> f = updaters.remove(ref);
                             if (f != null) f.cancel(false);
                         } catch (Throwable t) {
@@ -455,7 +422,17 @@ public final class AutoScoreboardSystem extends RefSystem<EntityStore> {
             if (p != null && pref != null) {
                 HudManager hm = p.getHudManager();
                 if (hm != null && hm.getCustomHud() instanceof ScoreboardHud) {
-                    hm.setCustomHud(pref, null);
+                    // hide the HUD safely on the world thread
+                    try {
+                        if (p.getWorld() != null) {
+                            p.getWorld().execute(() -> {
+                                try {
+                                    ScoreboardHud sb = (ScoreboardHud) hm.getCustomHud();
+                                    if (sb != null) sb.hideFor(p);
+                                } catch (Throwable ignored) {}
+                            });
+                        }
+                    } catch (Throwable ignored) {}
                 }
             }
         } catch (Throwable t) {
@@ -543,8 +520,8 @@ public final class AutoScoreboardSystem extends RefSystem<EntityStore> {
             boolean registered = false;
 
             try {
-                Method subscribeFunc = eventBus.getClass().getMethod("subscribe", Class.class, Function.class);
-                Function<Object, CompletableFuture<?>> func = new Function<>() {
+                Method subscribeFunc = eventBus.getClass().getMethod("subscribe", Class.class, java.util.function.Function.class);
+                java.util.function.Function<Object, CompletableFuture<?>> func = new java.util.function.Function<>() {
                     @Override
                     public CompletableFuture<?> apply(Object event) {
                         try {
@@ -562,8 +539,8 @@ public final class AutoScoreboardSystem extends RefSystem<EntityStore> {
 
             if (!registered) {
                 try {
-                    Method subscribeConsumer = eventBus.getClass().getMethod("subscribe", Class.class, Consumer.class);
-                    Consumer<Object> consumer = new Consumer<>() {
+                    Method subscribeConsumer = eventBus.getClass().getMethod("subscribe", Class.class, java.util.function.Consumer.class);
+                    java.util.function.Consumer<Object> consumer = new java.util.function.Consumer<>() {
                         @Override
                         public void accept(Object event) {
                             try {
@@ -670,7 +647,7 @@ public final class AutoScoreboardSystem extends RefSystem<EntityStore> {
                             Player p = (Player) s.getComponent(r, Player.getComponentType());
                             PlayerRef pr = (PlayerRef) s.getComponent(r, PlayerRef.getComponentType());
                             if (p == null || pr == null) return;
-                            HudManager hm = p.getHudManager();
+                            com.hypixel.hytale.server.core.entity.entities.player.hud.HudManager hm = p.getHudManager();
                             if (hm == null) return;
                             if (hm.getCustomHud() instanceof ScoreboardHud) {
                                 ScoreboardHud sb = (ScoreboardHud) hm.getCustomHud();
@@ -679,11 +656,9 @@ public final class AutoScoreboardSystem extends RefSystem<EntityStore> {
                                     lastKnownRank.put(r, rankText);
                                     sb.setRank(rankText);
                                     try {
-                                        sb.refresh();
+                                        sb.refreshFor(p);
                                     } catch (CancellationException ce) {
                                         LOGGER.atWarning().withCause(ce).log("[AUTOSCORE] HUD refresh canceled during LP event for ref=%s", r);
-                                    } catch (IllegalStateException ise) {
-                                        LOGGER.atWarning().withCause(ise).log("[AUTOSCORE] HUD refresh illegal state during LP event for ref=%s", r);
                                     } catch (Throwable t) {
                                         LOGGER.atWarning().withCause(t).log("[AUTOSCORE] HUD refresh failed during LP event for ref=%s", r);
                                     }
