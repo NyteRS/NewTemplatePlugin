@@ -1,74 +1,70 @@
 package com.example.exampleplugin;
 
+import com.hypixel.hytale.logger.HytaleLogger;
 import com.hypixel.hytale.server.core.entity.entities.player.hud.CustomUIHud;
 import com.hypixel.hytale.server.core.ui.builder.UICommandBuilder;
 import com.hypixel.hytale.server.core.universe.PlayerRef;
-import com.hypixel.hytale.logger.HytaleLogger;
 
 import javax.annotation.Nonnull;
 
 /**
- * ScoreboardHud - follows the CustomUIHud API:
- * - build() appends an existing .ui file: Pages/Scoreboard.ui
- * - refresh() updates fields using UICommandBuilder.set(...) (incremental updates)
+ * ScoreboardHud (asset-driven).
+ *
+ * - Appends Pages/Scoreboard.ui and exposes setters + refresh() for updating fields.
+ * - Use these setters from systems/commands: setServerName, setGold, setRank, setPlaytime, setCoords, setFooter.
  */
 public class ScoreboardHud extends CustomUIHud {
     private static final HytaleLogger LOGGER = HytaleLogger.forEnclosingClass();
 
-    private String title = "Scoreboard";
-    private String line1 = "Money: 0";
-    private String line2 = "Shards: 0";
-    private String line3 = "Kills: 0";
-    private String line4 = "Playtime: 0m";
+    private String serverName = "SERVER NAME";
+    private String gold = "Gold: 0";
+    private String rank = "Rank: Member";
+    private String playtime = "Playtime: 0m";
+    private String coords = "Coords: 0, 0, 0";
+    private String footer = "www.example.server";
 
     public ScoreboardHud(@Nonnull PlayerRef playerRef) {
         super(playerRef);
     }
 
-    /**
-     * Append the .ui file that must be placed at:
-     *   src/main/resources/Common/UI/Custom/Pages/Scoreboard.ui
-     *
-     * After appending, set the initial values into the UI using selectors.
-     */
     @Override
     protected void build(@Nonnull UICommandBuilder commandBuilder) {
-        // This follows the docs: append("MyUI.ui") resolves to resources/Common/UI/Custom/MyUI.ui
+        // Append the prepared UI asset (must be at resources/Common/UI/Custom/Pages/Scoreboard.ui)
         commandBuilder.append("Pages/Scoreboard.ui");
 
-        // Set initial values - selectors must match IDs in the .ui file
-        commandBuilder.set("#ScoreboardRoot #Title.Text", title);
-        commandBuilder.set("#ScoreboardRoot #Line1.Text", line1);
-        commandBuilder.set("#ScoreboardRoot #Line2.Text", line2);
-        commandBuilder.set("#ScoreboardRoot #Line3.Text", line3);
-        commandBuilder.set("#ScoreboardRoot #Line4.Text", line4);
+        // Set initial values (selectors must match IDs inside the .ui)
+        commandBuilder.set("#ScoreboardRoot #ServerName.Text", serverName);
+        commandBuilder.set("#ScoreboardRoot #Gold.Text", gold);
+        commandBuilder.set("#ScoreboardRoot #Rank.Text", rank);
+        commandBuilder.set("#ScoreboardRoot #Playtime.Text", playtime);
+        commandBuilder.set("#ScoreboardRoot #Coords.Text", coords);
+        commandBuilder.set("#ScoreboardRoot #Footer.Text", footer);
     }
 
-    // Simple setters
-    public void setTitle(String t) { this.title = t; }
-    public void setLine1(String s) { this.line1 = s; }
-    public void setLine2(String s) { this.line2 = s; }
-    public void setLine3(String s) { this.line3 = s; }
-    public void setLine4(String s) { this.line4 = s; }
+    // New API setters — use these everywhere in your code
+    public void setServerName(String s) { this.serverName = s; }
+    public void setGold(String s) { this.gold = s; }
+    public void setRank(String s) { this.rank = s; }
+    public void setPlaytime(String s) { this.playtime = s; }
+    public void setCoords(String s) { this.coords = s; }
+    public void setFooter(String s) { this.footer = s; }
 
     /**
-     * Incremental update of label texts.
-     * Call after modifying fields above.
+     * Incremental update of label texts. Call after modifying fields above.
      */
     public void refresh() {
-        UICommandBuilder builder = new UICommandBuilder();
-        builder.set("#ScoreboardRoot #Title.Text", title);
-        builder.set("#ScoreboardRoot #Line1.Text", line1);
-        builder.set("#ScoreboardRoot #Line2.Text", line2);
-        builder.set("#ScoreboardRoot #Line3.Text", line3);
-        builder.set("#ScoreboardRoot #Line4.Text", line4);
+        UICommandBuilder b = new UICommandBuilder();
+        b.set("#ScoreboardRoot #ServerName.Text", serverName);
+        b.set("#ScoreboardRoot #Gold.Text", gold);
+        b.set("#ScoreboardRoot #Rank.Text", rank);
+        b.set("#ScoreboardRoot #Playtime.Text", playtime);
+        b.set("#ScoreboardRoot #Coords.Text", coords);
+        b.set("#ScoreboardRoot #Footer.Text", footer);
 
-        // update(false, builder) sends incremental changes without clearing entire HUD
-        update(false, builder);
+        update(false, b);
     }
 
-    // Optional helper to show everything in logs when needed
-    public void debugLogInitial() {
-        LOGGER.atInfo().log("ScoreboardHud initial: %s / %s / %s / %s", line1, line2, line3, line4);
+    public void debugLog() {
+        LOGGER.atInfo().log("ScoreboardHud: %s / %s / %s / %s / %s", serverName, gold, rank, playtime, coords);
     }
 }

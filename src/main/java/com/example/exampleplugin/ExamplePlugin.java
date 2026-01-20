@@ -12,18 +12,12 @@ import com.hypixel.hytale.server.core.universe.world.storage.EntityStore;
 import com.hypixel.hytale.server.core.universe.PlayerRef;
 import com.hypixel.hytale.server.core.entity.entities.Player;
 import com.hypixel.hytale.server.core.HytaleServer;
-import com.hypixel.hytale.protocol.packets.interface_.HudComponent;
 
 import javax.annotation.Nonnull;
 import java.util.concurrent.TimeUnit;
 
 /**
- * ExamplePlugin - attaches the Scoreboard HUD on PlayerReady using HudManager#setCustomHud.
- *
- * This follows the API you quoted:
- * - CustomUIHud subclass (ScoreboardHud) overrides build(UICommandBuilder) and appends a .ui asset.
- * - Use HudManager#setCustomHud to show the custom HUD.
- * - If you want to hide built-in HUD components (hotbar/health), call HudManager#hideHudComponents.
+ * ExamplePlugin - attaches the Scoreboard HUD on PlayerReady using HudManager#setCustomHud
  */
 public class ExamplePlugin extends JavaPlugin {
     private static final HytaleLogger LOGGER = HytaleLogger.forEnclosingClass();
@@ -35,66 +29,59 @@ public class ExamplePlugin extends JavaPlugin {
 
     @Override
     protected void setup() {
-        // Keep other registrations as you need them
         ComponentRegistryProxy<EntityStore> registry = getEntityStoreRegistry();
         registry.registerSystem(new LifestealSystems.LifestealOnDamage());
 
         this.getCommandRegistry().registerCommand(new DungeonUICommand());
         this.getCommandRegistry().registerCommand(new ScoreboardCommand());
         this.getCommandRegistry().registerCommand(new ExampleCommand(this.getName(), this.getManifest().getVersion().toString()));
+
+        // register autoscoreboard if desired:
+        this.getEntityStoreRegistry().registerSystem(new AutoScoreboardSystem());
     }
 
     @Override
     protected void start() {
         super.start();
-
-        // Register PlayerReadyEvent listener so HUD is attached once client is ready
         getEventRegistry().registerGlobal(PlayerReadyEvent.class, this::onPlayerReady);
     }
 
     private void onPlayerReady(@Nonnull PlayerReadyEvent event) {
         Ref<EntityStore> playerRef = event.getPlayer().getReference();
         if (playerRef == null) return;
-
         Store<EntityStore> store = playerRef.getStore();
         if (store == null) return;
-
         World world = ((EntityStore) store.getExternalData()).getWorld();
         if (world == null) return;
 
-        // Slight delay to ensure assets have arrived on the client. Tune as needed (250 - 500ms recommended).
+        // small delay to let client process assetpack
         HytaleServer.SCHEDULED_EXECUTOR.schedule(() -> {
             world.execute(() -> {
                 try {
                     if (!playerRef.isValid()) return;
+                    Player player = (Player) store.getComponent(playerRef, Player.getComponentType());
+                    PlayerRef pref = (PlayerRef) store.getComponent(playerRef, PlayerRef.getComponentType());
+                    if (player == null || pref == null) return;
 
-                    Player playerComponent = (Player) store.getComponent(playerRef, Player.getComponentType());
-                    if (playerComponent == null) return;
-
-                    PlayerRef playerRefComponent = (PlayerRef) store.getComponent(playerRef, PlayerRef.getComponentType());
-                    if (playerRefComponent == null) return;
-
-                    var hudManager = playerComponent.getHudManager();
+                    var hudManager = player.getHudManager();
                     if (hudManager == null) return;
 
-                    // Optionally hide base HUD components (hotbar etc.) if you want a clean screen
-                    // hudManager.hideHudComponents(playerRefComponent, HudComponent.Hotbar, HudComponent.Health);
+                    // Attach scoreboard HUD with new API
+                    ScoreboardHud hud = new ScoreboardHud(pref);
+                    hud.setServerName("ExampleSMP");
+                    hud.setGold("Gold: 0");
+                    hud.setRank("Rank: Member");
+                    hud.setPlaytime("Playtime: 0m");
+                    hud.setCoords("Coords: 0, 0, 0");
+                    hud.setFooter("www.example.server");
 
-                    // Attach and show our CustomUIHud that appends a .ui asset
-                    ScoreboardHud hud = new ScoreboardHud(playerRefComponent);
-                    hud.setLine1("Money: 0");
-                    hud.setLine2("Shards: 0");
-                    hud.setLine3("Kills: 0");
-                    hud.setLine4("Playtime: 0m");
-
-                    hudManager.setCustomHud(playerRefComponent, hud);
+                    hudManager.setCustomHud(pref, hud);
                     hud.show();
 
-                    LOGGER.atInfo().log("Scoreboard HUD attached for player %s", playerRefComponent);
                 } catch (Throwable t) {
-                    LOGGER.atSevere().withCause(t).log("Failed to attach Scoreboard HUD");
+                    LOGGER.atSevere().withCause(t).log("PlayerReady attach failed");
                 }
             });
-        }, 30000L, TimeUnit.MILLISECONDS);
+        }, 350L, TimeUnit.MILLISECONDS);
     }
 }
