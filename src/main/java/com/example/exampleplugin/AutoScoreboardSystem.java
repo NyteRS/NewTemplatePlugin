@@ -6,6 +6,7 @@ import com.hypixel.hytale.component.ComponentType;
 import com.hypixel.hytale.component.Ref;
 import com.hypixel.hytale.component.RemoveReason;
 import com.hypixel.hytale.component.Store;
+import com.hypixel.hytale.server.core.entity.UUIDComponent;
 import com.hypixel.hytale.component.query.Query;
 import com.hypixel.hytale.component.system.RefSystem;
 import com.hypixel.hytale.logger.HytaleLogger;
@@ -17,8 +18,10 @@ import com.hypixel.hytale.server.core.universe.PlayerRef;
 import com.hypixel.hytale.server.core.universe.world.World;
 import com.hypixel.hytale.server.core.universe.world.storage.EntityStore;
 import com.hypixel.hytale.server.core.HytaleServer;
-// Correct UUIDComponent import:
-import com.hypixel.hytale.server.core.entity.UUIDComponent;
+
+import net.luckperms.api.LuckPerms;
+import net.luckperms.api.LuckPermsProvider;
+import net.luckperms.api.model.user.User;
 
 import javax.annotation.Nonnull;
 import java.util.Map;
@@ -33,6 +36,7 @@ import java.util.concurrent.TimeUnit;
  * - Attaches ScoreboardHud after a short delay and schedules periodic refreshes.
  * - Playtime is persisted across sessions using PlaytimeStore.
  * - Coords update frequency: once per second (tunable).
+ * - Integrates with LuckPerms: sets Rank: <primaryGroup> using the LP API.
  */
 public final class AutoScoreboardSystem extends RefSystem<EntityStore> {
     private static final HytaleLogger LOGGER = HytaleLogger.forEnclosingClass();
@@ -49,7 +53,7 @@ public final class AutoScoreboardSystem extends RefSystem<EntityStore> {
     // Playtime persistence store
     private final PlaytimeStore playtimeStore = new PlaytimeStore();
 
-    // Refresh freq in seconds (1s for responsive coords)
+    // Refresh freq in seconds (1s for responsive coords). Change to 0.5s with millis if you want subsecond.
     private static final long REFRESH_PERIOD_SECONDS = 1L;
 
     public AutoScoreboardSystem() {
@@ -128,7 +132,7 @@ public final class AutoScoreboardSystem extends RefSystem<EntityStore> {
 
                     hud.setServerName("Darkvale");
                     hud.setGold("Gold: 0");
-                    hud.setRank("Rank: Member");
+                    hud.setRank("Rank: Member"); // fallback until LP resolves
                     hud.setPlaytime(formatPlaytime(storedTotal + (System.currentTimeMillis() - joinedMs)));
                     hud.setCoords("Coords: 0, 0, 0");
                     hud.setFooter("www.darkvale.com");
@@ -155,10 +159,52 @@ public final class AutoScoreboardSystem extends RefSystem<EntityStore> {
                                 // Update playtime using stored total + session elapsed
                                 UUID u = refToUuid.get(ref);
                                 long stored = (u != null) ? playtimeStore.getTotalMillis(u) : 0L;
-                                long joined = joinTimestamps.getOrDefault(ref, System.currentTimeMillis());
-                                hud.setPlaytime(formatPlaytime(stored + (System.currentTimeMillis() - joined)));
+                                long joinedNow = joinTimestamps.getOrDefault(ref, System.currentTimeMillis());
+                                hud.setPlaytime(formatPlaytime(stored + (System.currentTimeMillis() - joinedNow)));
 
-                                hud.refresh();
+                                // Try LuckPerms -> get primary group (non-blocking fast path)
+                                if (u != null) {
+                                    try {
+                                        LuckPerms lp = LuckPermsProvider.get();
+                                        if (lp != null) {
+                                            User user = lp.getUserManager().getUser(u);
+                                            if (user != null) {
+                                                String primary = user.getPrimaryGroup();
+                                                hud.setRank("Rank: " + primary);
+                                                // we already are on world thread so we can refresh with playtime/coords too
+                                                hud.refresh();
+                                            } else {
+                                                // user not loaded -> load asynchronously and update when ready
+                                                lp.getUserManager().loadUser(u).thenAccept(loadedUser -> {
+                                                    if (loadedUser == null) return;
+                                                    String primary = loadedUser.getPrimaryGroup();
+                                                    // post update to world thread
+                                                    world.execute(() -> {
+                                                        try {
+                                                            // only update if ref is still valid and our HUD is still present
+                                                            if (!ref.isValid()) return;
+                                                            if (hm.getCustomHud() instanceof ScoreboardHud) {
+                                                                ScoreboardHud sb = (ScoreboardHud) hm.getCustomHud();
+                                                                sb.setRank("Rank: " + primary);
+                                                                sb.refresh();
+                                                            }
+                                                        } catch (Throwable t) {
+                                                            LOGGER.atWarning().withCause(t).log("Failed to apply loaded LuckPerms user to HUD");
+                                                        }
+                                                    });
+                                                }).exceptionally(exc -> {
+                                                    // swallow exceptions to avoid spam
+                                                    return null;
+                                                });
+                                            }
+                                        }
+                                    } catch (Throwable ignoreLp) {
+                                        // LuckPerms may not be on classpath at compile time — ignore silently
+                                    }
+                                } else {
+                                    // no uuid -> leave rank as is
+                                    hud.refresh();
+                                }
                             } catch (Throwable t) {
                                 LOGGER.atWarning().withCause(t).log("AutoScoreboard refresh failed");
                             }
