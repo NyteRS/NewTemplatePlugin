@@ -1,3 +1,5 @@
+/* ScoreboardHud — changed cached fields to volatile for safer cross-thread visibility */
+
 package com.example.exampleplugin;
 
 import com.hypixel.hytale.logger.HytaleLogger;
@@ -16,12 +18,12 @@ public class ScoreboardHud extends CustomUIHud {
     private static final HytaleLogger LOGGER = HytaleLogger.forEnclosingClass();
 
     // Default server values updated to Darkvale
-    private String serverName = "Darkvale";
-    private String gold = "Gold: 0";
-    private String rank = "Rank: Member";
-    private String playtime = "Playtime: 0m";
-    private String coords = "Coords: 0, 0, 0";
-    private String footer = "www.darkvale.com";
+    private volatile String serverName = "Darkvale";
+    private volatile String gold = "Gold: 0";
+    private volatile String rank = "Rank: Member";
+    private volatile String playtime = "Playtime: 0m";
+    private volatile String coords = "Coords: 0, 0, 0";
+    private volatile String footer = "www.darkvale.com";
 
     public ScoreboardHud(@Nonnull PlayerRef playerRef) {
         super(playerRef);

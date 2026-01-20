@@ -187,53 +187,88 @@ public final class AutoScoreboardSystem extends RefSystem<EntityStore> {
 
                     // schedule periodic refresh task (coords/playtime + cheap cached LP checks + permission fallback)
                     ScheduledFuture<?> future = HytaleServer.SCHEDULED_EXECUTOR.scheduleAtFixedRate(() -> {
-                        world.execute(() -> {
-                            try {
-                                if (!ref.isValid()) return;
-
-                                TransformComponent transform = (TransformComponent) store.getComponent(ref, TransformComponent.getComponentType());
-                                if (transform != null) {
-                                    Vector3d pos = transform.getPosition();
-                                    hud.setCoords(String.format("Coords: %d, %d, %d",
-                                            (int) Math.floor(pos.getX()),
-                                            (int) Math.floor(pos.getY()),
-                                            (int) Math.floor(pos.getZ())));
-                                }
-
-                                UUID u = refToUuid.get(ref);
-                                long stored = (u != null) ? playtimeStore.getTotalMillis(u) : 0L;
-                                long joinedNow = joinTimestamps.getOrDefault(ref, System.currentTimeMillis());
-                                hud.setPlaytime(formatPlaytime(stored + (System.currentTimeMillis() - joinedNow)));
-
-                                // Try LuckPerms cached fast-path first
-                                String newRank = null;
-                                try {
-                                    newRank = tryLuckPermsCachedRank(u);
-                                } catch (Throwable ignored) {}
-
-                                // If LP cached not available, use permission fallback via Player (re-query Player from store)
-                                if (newRank == null) {
-                                    try {
-                                        Player pNow = (Player) store.getComponent(ref, Player.getComponentType());
-                                        if (pNow != null) {
-                                            newRank = tryPermissionRank(pNow);
-                                        }
-                                    } catch (Throwable ignored) {}
-                                }
-
-                                if (newRank == null) newRank = "Rank: Member";
-
-                                String last = lastKnownRank.get(ref);
-                                if (last == null || !last.equals(newRank)) {
-                                    lastKnownRank.put(ref, newRank);
-                                    hud.setRank(newRank);
-                                }
-
-                                hud.refresh();
-                            } catch (Throwable t) {
-                                LOGGER.atWarning().withCause(t).log("[AUTOSCORE] Periodic refresh failed");
+                        try {
+                            // If ref invalid, cancel and cleanup
+                            if (!ref.isValid()) {
+                                ScheduledFuture<?> fut = updaters.remove(ref);
+                                if (fut != null) fut.cancel(false);
+                                return;
                             }
-                        });
+
+                            // Resolve the current store & world for this ref on each tick (avoid captured stale world)
+                            Store<EntityStore> curStore = ref.getStore();
+                            if (curStore == null) return;
+                            EntityStore externalNow = (EntityStore) curStore.getExternalData();
+                            if (externalNow == null) return;
+                            World curWorld = externalNow.getWorld();
+                            if (curWorld == null) return;
+
+                            // Dispatch work to the current world's thread
+                            curWorld.execute(() -> {
+                                try {
+                                    if (!ref.isValid()) {
+                                        ScheduledFuture<?> fut = updaters.remove(ref);
+                                        if (fut != null) fut.cancel(false);
+                                        return;
+                                    }
+
+                                    // Re-fetch live components from the current store
+                                    Player pNow = (Player) curStore.getComponent(ref, Player.getComponentType());
+                                    if (pNow == null) return;
+                                    PlayerRef prefNow = (PlayerRef) curStore.getComponent(ref, PlayerRef.getComponentType());
+                                    HudManager hmNow = pNow.getHudManager();
+                                    if (hmNow == null) return;
+                                    if (!(hmNow.getCustomHud() instanceof ScoreboardHud)) return;
+
+                                    ScoreboardHud hudNow = (ScoreboardHud) hmNow.getCustomHud();
+
+                                    // Update coords if transform available
+                                    TransformComponent transform = (TransformComponent) curStore.getComponent(ref, TransformComponent.getComponentType());
+                                    if (transform != null) {
+                                        Vector3d pos = transform.getPosition();
+                                        hudNow.setCoords(String.format("Coords: %d, %d, %d",
+                                                (int) Math.floor(pos.getX()),
+                                                (int) Math.floor(pos.getY()),
+                                                (int) Math.floor(pos.getZ())));
+                                    }
+
+                                    // Update playtime
+                                    UUID u = refToUuid.get(ref);
+                                    long stored = (u != null) ? playtimeStore.getTotalMillis(u) : 0L;
+                                    long joinedNow = joinTimestamps.getOrDefault(ref, System.currentTimeMillis());
+                                    hudNow.setPlaytime(formatPlaytime(stored + (System.currentTimeMillis() - joinedNow)));
+
+                                    // Rank resolution: try LP cached, then permission fallback via Player obtained from current store
+                                    String newRank = null;
+                                    try {
+                                        newRank = tryLuckPermsCachedRank(u);
+                                    } catch (Throwable ignored) {}
+
+                                    if (newRank == null) {
+                                        try {
+                                            Player pRe = (Player) curStore.getComponent(ref, Player.getComponentType());
+                                            if (pRe != null) {
+                                                newRank = tryPermissionRank(pRe);
+                                            }
+                                        } catch (Throwable ignored) {}
+                                    }
+
+                                    if (newRank == null) newRank = "Rank: Member";
+
+                                    String last = lastKnownRank.get(ref);
+                                    if (last == null || !last.equals(newRank)) {
+                                        lastKnownRank.put(ref, newRank);
+                                        hudNow.setRank(newRank);
+                                    }
+
+                                    hudNow.refresh();
+                                } catch (Throwable t) {
+                                    LOGGER.atWarning().withCause(t).log("[AUTOSCORE] Periodic refresh failed");
+                                }
+                            });
+                        } catch (Throwable t) {
+                            LOGGER.atWarning().withCause(t).log("[AUTOSCORE] Periodic updater outer failed");
+                        }
                     }, REFRESH_PERIOD_SECONDS, REFRESH_PERIOD_SECONDS, TimeUnit.SECONDS);
 
                     updaters.put(ref, future);
