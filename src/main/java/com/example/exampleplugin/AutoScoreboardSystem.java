@@ -6,7 +6,6 @@ import com.hypixel.hytale.component.ComponentType;
 import com.hypixel.hytale.component.Ref;
 import com.hypixel.hytale.component.RemoveReason;
 import com.hypixel.hytale.component.Store;
-import com.hypixel.hytale.server.core.entity.UUIDComponent;
 import com.hypixel.hytale.component.query.Query;
 import com.hypixel.hytale.component.system.RefSystem;
 import com.hypixel.hytale.logger.HytaleLogger;
@@ -18,6 +17,9 @@ import com.hypixel.hytale.server.core.universe.PlayerRef;
 import com.hypixel.hytale.server.core.universe.world.World;
 import com.hypixel.hytale.server.core.universe.world.storage.EntityStore;
 import com.hypixel.hytale.server.core.HytaleServer;
+
+// Correct UUIDComponent import (server core entity package)
+import com.hypixel.hytale.server.core.entity.UUIDComponent;
 
 import net.luckperms.api.LuckPerms;
 import net.luckperms.api.LuckPermsProvider;
@@ -53,7 +55,7 @@ public final class AutoScoreboardSystem extends RefSystem<EntityStore> {
     // Playtime persistence store
     private final PlaytimeStore playtimeStore = new PlaytimeStore();
 
-    // Refresh freq in seconds (1s for responsive coords). Change to 0.5s with millis if you want subsecond.
+    // Refresh freq in seconds (1s for responsive coords)
     private static final long REFRESH_PERIOD_SECONDS = 1L;
 
     public AutoScoreboardSystem() {
@@ -93,7 +95,7 @@ public final class AutoScoreboardSystem extends RefSystem<EntityStore> {
         if (hudManager == null) return;
         if (hudManager.getCustomHud() instanceof ScoreboardHud) return;
 
-        // Attempt to get player UUID (persistent key) if available via UUIDComponent
+        // Attempt to get player UUID (persistent key) from commandBuffer fast path
         UUID playerUuid = null;
         try {
             UUIDComponent uuidComponent = (UUIDComponent) commandBuffer.getComponent(ref, UUIDComponent.getComponentType());
@@ -113,9 +115,18 @@ public final class AutoScoreboardSystem extends RefSystem<EntityStore> {
                 try {
                     if (!ref.isValid()) return;
 
+                    // Re-check components on world thread and ensure UUID is present in refToUuid
                     Player p = (Player) store.getComponent(ref, Player.getComponentType());
                     PlayerRef pref = (PlayerRef) store.getComponent(ref, PlayerRef.getComponentType());
                     if (p == null || pref == null) return;
+
+                    // If we didn't obtain UUID earlier, try to read it from the store on the world thread
+                    if (!refToUuid.containsKey(ref)) {
+                        try {
+                            UUIDComponent storeUuid = (UUIDComponent) store.getComponent(ref, UUIDComponent.getComponentType());
+                            if (storeUuid != null) refToUuid.put(ref, storeUuid.getUuid());
+                        } catch (Throwable ignored) {}
+                    }
 
                     HudManager hm = p.getHudManager();
                     if (hm == null) return;
@@ -162,7 +173,7 @@ public final class AutoScoreboardSystem extends RefSystem<EntityStore> {
                                 long joinedNow = joinTimestamps.getOrDefault(ref, System.currentTimeMillis());
                                 hud.setPlaytime(formatPlaytime(stored + (System.currentTimeMillis() - joinedNow)));
 
-                                // Try LuckPerms -> get primary group (non-blocking fast path)
+                                // Try LuckPerms: fast-path cached user -> set rank; if not loaded, load async.
                                 if (u != null) {
                                     try {
                                         LuckPerms lp = LuckPermsProvider.get();
@@ -171,17 +182,13 @@ public final class AutoScoreboardSystem extends RefSystem<EntityStore> {
                                             if (user != null) {
                                                 String primary = user.getPrimaryGroup();
                                                 hud.setRank("Rank: " + primary);
-                                                // we already are on world thread so we can refresh with playtime/coords too
-                                                hud.refresh();
                                             } else {
-                                                // user not loaded -> load asynchronously and update when ready
+                                                // Asynchronously load the user and update when ready
                                                 lp.getUserManager().loadUser(u).thenAccept(loadedUser -> {
                                                     if (loadedUser == null) return;
                                                     String primary = loadedUser.getPrimaryGroup();
-                                                    // post update to world thread
                                                     world.execute(() -> {
                                                         try {
-                                                            // only update if ref is still valid and our HUD is still present
                                                             if (!ref.isValid()) return;
                                                             if (hm.getCustomHud() instanceof ScoreboardHud) {
                                                                 ScoreboardHud sb = (ScoreboardHud) hm.getCustomHud();
@@ -193,18 +200,20 @@ public final class AutoScoreboardSystem extends RefSystem<EntityStore> {
                                                         }
                                                     });
                                                 }).exceptionally(exc -> {
-                                                    // swallow exceptions to avoid spam
+                                                    // swallow exceptions
                                                     return null;
                                                 });
                                             }
                                         }
                                     } catch (Throwable ignoreLp) {
-                                        // LuckPerms may not be on classpath at compile time — ignore silently
+                                        // LuckPerms may not be available on runtime classpath; ignore
                                     }
-                                } else {
-                                    // no uuid -> leave rank as is
-                                    hud.refresh();
                                 }
+
+                                // Always refresh the HUD each tick so coords/playtime always update,
+                                // even if LuckPerms is missing or throwing.
+                                hud.refresh();
+
                             } catch (Throwable t) {
                                 LOGGER.atWarning().withCause(t).log("AutoScoreboard refresh failed");
                             }
