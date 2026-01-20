@@ -35,15 +35,15 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * AutoScoreboardSystem — attaches ScoreboardHud safely and refreshes it periodically.
  *
- * Key changes:
- * - When attaching we use ScoreboardHud.openFor(player) (which schedules world.execute internally).
- * - Periodic updates call ScoreboardHud.refreshFor(player) on the world thread.
- * - All HUD writes are full-document writes (ScoreboardHud.writeHud), minimizing partial updates & races.
+ * Key points:
+ * - Attaches HUD using ScoreboardHud.openFor(player) so initial append + values are sent from the world thread.
+ * - Periodic updates perform world.execute(...) and call ScoreboardHud.refreshNow(player) synchronously on the world thread
+ *   to avoid nested scheduling and ensure immediate writes.
+ * - All HUD updates check ref.isValid() and world.isAlive() and cancel scheduled updaters when appropriate.
  */
 public final class AutoScoreboardSystem extends RefSystem<EntityStore> {
     private static final HytaleLogger LOGGER = HytaleLogger.forEnclosingClass();
@@ -369,9 +369,9 @@ public final class AutoScoreboardSystem extends RefSystem<EntityStore> {
                             } catch (Throwable ignore) {}
                         }
 
-                        // refresh HUD on world thread (this will call update(false, builder) internally)
+                        // refresh HUD immediately on this world thread (synchronous)
                         try {
-                            hud.refreshFor(p);
+                            hud.refreshNow(p);
                         } catch (CancellationException ce) {
                             LOGGER.atWarning().withCause(ce).log("[AUTOSCORE] HUD refresh canceled during periodic tick for ref=%s; cancelling updater", ref);
                             ScheduledFuture<?> f = updaters.remove(ref);
@@ -380,7 +380,7 @@ public final class AutoScoreboardSystem extends RefSystem<EntityStore> {
                             LOGGER.atWarning().withCause(t).log("[AUTOSCORE] Periodic HUD refresh error for ref=%s", ref);
                         }
                     } catch (Throwable t) {
-                        LOGGER.atWarning().withCause(t).log("[AUTOSCORE] Periodic refresh failed");
+                        LOGGER.atWarning().withCause(t).log(("[AUTOSCORE] Periodic refresh failed"));
                     }
                 });
             }, REFRESH_PERIOD_SECONDS, REFRESH_PERIOD_SECONDS, TimeUnit.SECONDS);
@@ -647,7 +647,7 @@ public final class AutoScoreboardSystem extends RefSystem<EntityStore> {
                             Player p = (Player) s.getComponent(r, Player.getComponentType());
                             PlayerRef pr = (PlayerRef) s.getComponent(r, PlayerRef.getComponentType());
                             if (p == null || pr == null) return;
-                            com.hypixel.hytale.server.core.entity.entities.player.hud.HudManager hm = p.getHudManager();
+                            HudManager hm = p.getHudManager();
                             if (hm == null) return;
                             if (hm.getCustomHud() instanceof ScoreboardHud) {
                                 ScoreboardHud sb = (ScoreboardHud) hm.getCustomHud();
@@ -656,7 +656,7 @@ public final class AutoScoreboardSystem extends RefSystem<EntityStore> {
                                     lastKnownRank.put(r, rankText);
                                     sb.setRank(rankText);
                                     try {
-                                        sb.refreshFor(p);
+                                        sb.refreshNow(p); // immediate write on world thread
                                     } catch (CancellationException ce) {
                                         LOGGER.atWarning().withCause(ce).log("[AUTOSCORE] HUD refresh canceled during LP event for ref=%s", r);
                                     } catch (Throwable t) {
