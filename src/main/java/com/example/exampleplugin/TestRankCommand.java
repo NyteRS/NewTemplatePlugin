@@ -34,7 +34,6 @@ public class TestRankCommand extends AbstractPlayerCommand {
             @Nonnull PlayerRef playerRef,
             @Nonnull World world
     ) {
-        // Try to read UUIDComponent from the player's entity holder
         UUIDComponent uuidComp = (UUIDComponent) store.getComponent(ref, UUIDComponent.getComponentType());
         if (uuidComp == null) {
             context.sendMessage(Message.raw("Could not determine your UUID."));
@@ -43,7 +42,6 @@ public class TestRankCommand extends AbstractPlayerCommand {
 
         UUID uuid = uuidComp.getUuid();
 
-        // Try LuckPerms fast-path (cached)
         try {
             LuckPerms lp = LuckPermsProvider.get();
             if (lp == null) {
@@ -57,8 +55,6 @@ public class TestRankCommand extends AbstractPlayerCommand {
                 context.sendMessage(Message.raw("Your rank = " + primary));
                 return;
             }
-
-            // Not cached -> load asynchronously and notify player when ready
             context.sendMessage(Message.raw("Loading rank..."));
 
             lp.getUserManager().loadUser(uuid).thenAccept(loadedUser -> {
@@ -74,7 +70,6 @@ public class TestRankCommand extends AbstractPlayerCommand {
             });
 
         } catch (Throwable t) {
-            // If LuckPerms classes are missing at runtime this will catch NoClassDefFoundError etc.
             context.sendMessage(Message.raw("Error while checking LuckPerms: " + t.getClass().getSimpleName()));
         }
     }

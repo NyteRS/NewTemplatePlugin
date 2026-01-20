@@ -28,6 +28,7 @@ import net.luckperms.api.model.user.User;
 
 import javax.annotation.Nonnull;
 import java.lang.reflect.Method;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
@@ -36,15 +37,15 @@ import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 
 /**
- * AutoScoreboardSystem — cached-only LuckPerms integration + event-driven updates.
+ * AutoScoreboardSystem — cached-only LuckPerms integration + permission-node fallback and event-driven updates.
  *
  * - Uses cached getUser(...) only; does not call loadUser(...)
  * - Periodic cheap checks update HUD only when rank text changes
+ * - If LuckPerms API or cached data is unavailable, uses permission-node checks on the Player as a fallback
+ *   (configurable list of nodes -> rank display).
  * - Registers a LuckPerms UserDataRecalculateEvent listener reflectively (so plugin won't NoClassDefFoundError
  *   if LP API isn't visible to plugin classloader). The reflectively-handled event will update HUD immediately
  *   for affected players.
- *
- * Note: PlaytimeStore, ScoreboardHud and other referenced classes are assumed present elsewhere in the project.
  */
 public final class AutoScoreboardSystem extends RefSystem<EntityStore> {
     private static final HytaleLogger LOGGER = HytaleLogger.forEnclosingClass();
@@ -55,6 +56,17 @@ public final class AutoScoreboardSystem extends RefSystem<EntityStore> {
     private final Map<Ref<EntityStore>, String> lastKnownRank = new ConcurrentHashMap<>();
 
     private final PlaytimeStore playtimeStore = new PlaytimeStore();
+
+    // Permission node -> friendly rank name (order matters; first match wins)
+    private static final LinkedHashMap<String, String> PERMISSION_RANK_MAP = new LinkedHashMap<>();
+    static {
+        PERMISSION_RANK_MAP.put("group.owner", "Owner");
+        PERMISSION_RANK_MAP.put("group.admin", "Admin");
+        PERMISSION_RANK_MAP.put("group.moderator", "Moderator");
+        PERMISSION_RANK_MAP.put("group.mod", "Moderator");
+        PERMISSION_RANK_MAP.put("group.vip", "VIP");
+        PERMISSION_RANK_MAP.put("group.member", "Member");
+    }
 
     private static final long REFRESH_PERIOD_SECONDS = 1L;
 
@@ -147,39 +159,33 @@ public final class AutoScoreboardSystem extends RefSystem<EntityStore> {
                     hm.setCustomHud(pref, hud);
                     hud.show();
 
-                    // Cached-only LuckPerms fast-path at attach-time (do NOT call loadUser)
-                    String rankText = null;
-                    if (uuid != null) {
-                        try {
-                            LuckPerms lp = LuckPermsProvider.get();
-                            if (lp != null) {
-                                User user = lp.getUserManager().getUser(uuid); // cached only
-                                if (user != null) {
-                                    rankText = buildRankText(user);
-                                    LOGGER.atInfo().log("[AUTOSCORE] LP cached fast-path resolved for uuid=%s primary=%s", uuid, user.getPrimaryGroup());
-                                } else {
-                                    LOGGER.atInfo().log("[AUTOSCORE] LP cached user not available at attach for uuid=%s", uuid);
-                                }
-                            } else {
-                                LOGGER.atInfo().log("[AUTOSCORE] LuckPerms provider returned null at attach-time");
-                            }
-                        } catch (NoClassDefFoundError ncdf) {
-                            LOGGER.atWarning().log("[AUTOSCORE] LuckPerms API classes not available to plugin at runtime: %s", ncdf.getClass().getSimpleName());
-                        } catch (Throwable t) {
-                            LOGGER.atWarning().withCause(t).log("[AUTOSCORE] Exception while trying LuckPerms fast-path");
+                    // 1) Try LuckPerms cached fast-path
+                    String rankText = tryLuckPermsCachedRank(uuid);
+                    if (rankText != null) {
+                        lastKnownRank.put(ref, rankText);
+                        hud.setRank(rankText);
+                        hud.refresh();
+                        LOGGER.atInfo().log("[AUTOSCORE] LP cached fast-path resolved for uuid=%s", uuid);
+                    } else {
+                        // 2) Try permission-node based fallback using Player.hasPermission(...)
+                        String permRank = tryPermissionRank(p);
+                        if (permRank != null) {
+                            rankText = permRank;
+                            lastKnownRank.put(ref, rankText);
+                            hud.setRank(rankText);
+                            hud.refresh();
+                            LOGGER.atInfo().log("[AUTOSCORE] Permission fallback applied for ref=%s rank=%s", ref, rankText);
+                        } else {
+                            // final fallback
+                            rankText = "Rank: Member";
+                            lastKnownRank.put(ref, rankText);
+                            hud.setRank(rankText);
+                            hud.refresh();
+                            LOGGER.atInfo().log("[AUTOSCORE] Using fallback rank for uuid=%s", uuid);
                         }
                     }
 
-                    if (rankText == null) {
-                        rankText = "Rank: Member";
-                    }
-
-                    // store and apply initial rank
-                    lastKnownRank.put(ref, rankText);
-                    hud.setRank(rankText);
-                    hud.refresh();
-
-                    // schedule periodic refresh task (coords/playtime + cheap cached LP checks)
+                    // schedule periodic refresh task (coords/playtime + cheap cached LP checks + permission fallback)
                     ScheduledFuture<?> future = HytaleServer.SCHEDULED_EXECUTOR.scheduleAtFixedRate(() -> {
                         world.execute(() -> {
                             try {
@@ -199,27 +205,30 @@ public final class AutoScoreboardSystem extends RefSystem<EntityStore> {
                                 long joinedNow = joinTimestamps.getOrDefault(ref, System.currentTimeMillis());
                                 hud.setPlaytime(formatPlaytime(stored + (System.currentTimeMillis() - joinedNow)));
 
-                                // Cheap cached-only LP check: only update HUD if the cached primary/prefix changed
-                                if (u != null) {
+                                // Try LuckPerms cached fast-path first
+                                String newRank = null;
+                                try {
+                                    newRank = tryLuckPermsCachedRank(u);
+                                } catch (Throwable ignored) {}
+
+                                // If LP cached not available, use permission fallback via Player (re-query Player from store)
+                                if (newRank == null) {
                                     try {
-                                        LuckPerms lp = LuckPermsProvider.get();
-                                        if (lp != null) {
-                                            User user = lp.getUserManager().getUser(u); // cached fast-path only
-                                            if (user != null) {
-                                                String newRank = buildRankText(user);
-                                                String last = lastKnownRank.get(ref);
-                                                if (last == null || !last.equals(newRank)) {
-                                                    lastKnownRank.put(ref, newRank);
-                                                    hud.setRank(newRank);
-                                                }
-                                            }
+                                        Player pNow = (Player) store.getComponent(ref, Player.getComponentType());
+                                        if (pNow != null) {
+                                            newRank = tryPermissionRank(pNow);
                                         }
-                                    } catch (Throwable ignore) {
-                                        // ignore LP problems during ticks (we don't want to spam logs here)
-                                    }
+                                    } catch (Throwable ignored) {}
                                 }
 
-                                // refresh every tick to update coords/playtime and any applied rank changes
+                                if (newRank == null) newRank = "Rank: Member";
+
+                                String last = lastKnownRank.get(ref);
+                                if (last == null || !last.equals(newRank)) {
+                                    lastKnownRank.put(ref, newRank);
+                                    hud.setRank(newRank);
+                                }
+
                                 hud.refresh();
                             } catch (Throwable t) {
                                 LOGGER.atWarning().withCause(t).log("[AUTOSCORE] Periodic refresh failed");
@@ -272,6 +281,66 @@ public final class AutoScoreboardSystem extends RefSystem<EntityStore> {
         } catch (Throwable t) {
             LOGGER.atWarning().withCause(t).log("[AUTOSCORE] Cleanup exception");
         }
+    }
+
+    /**
+     * Try to obtain rank text from LuckPerms cached user (no loadUser calls).
+     * Returns "Rank: X" or null if unavailable.
+     */
+    private String tryLuckPermsCachedRank(UUID uuid) {
+        if (uuid == null) return null;
+        try {
+            LuckPerms lp = LuckPermsProvider.get();
+            if (lp == null) {
+                LOGGER.atInfo().log("[AUTOSCORE] LuckPermsProvider.get() returned null");
+                return null;
+            }
+            User user = lp.getUserManager().getUser(uuid);
+            if (user == null) return null;
+            return buildRankText(user);
+        } catch (NoClassDefFoundError ncdf) {
+            LOGGER.atWarning().log("[AUTOSCORE] LuckPerms API classes not available to plugin at runtime: %s", ncdf.getClass().getSimpleName());
+            return null;
+        } catch (Throwable t) {
+            LOGGER.atWarning().withCause(t).log("[AUTOSCORE] Error while checking LuckPerms cached user");
+            return null;
+        }
+    }
+
+    /**
+     * Permission-node fallback: check Player.hasPermission(node) for known nodes in PERMISSION_RANK_MAP.
+     * Returns "Rank: <Name>" or null if none matched or method not available.
+     */
+    private String tryPermissionRank(Player p) {
+        if (p == null) return null;
+        for (Map.Entry<String, String> e : PERMISSION_RANK_MAP.entrySet()) {
+            final String node = e.getKey();
+            final String rankName = e.getValue();
+            try {
+                // Try direct API first
+                try {
+                    Method m = p.getClass().getMethod("hasPermission", String.class);
+                    Object res = m.invoke(p, node);
+                    if (res instanceof Boolean && (Boolean) res) {
+                        return "Rank: " + rankName;
+                    }
+                } catch (NoSuchMethodException ns) {
+                    // Some server APIs might expose a different method name; try a couple of alternatives reflectively
+                    boolean has = false;
+                    try {
+                        Method alt = p.getClass().getMethod("hasPermissions", String.class);
+                        Object r = alt.invoke(p, node);
+                        if (r instanceof Boolean) has = (Boolean) r;
+                    } catch (Throwable ignoredAlt) {
+                        // final fallback: try a boolean field or skip
+                    }
+                    if (has) return "Rank: " + rankName;
+                }
+            } catch (Throwable t) {
+                // If any reflection/invoke fails for one node, continue to next node silently
+            }
+        }
+        return null;
     }
 
     /**
