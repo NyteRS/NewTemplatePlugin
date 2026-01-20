@@ -9,28 +9,57 @@ import com.hypixel.hytale.component.Store;
 import com.hypixel.hytale.component.query.Query;
 import com.hypixel.hytale.component.system.RefSystem;
 import com.hypixel.hytale.logger.HytaleLogger;
+import com.hypixel.hytale.math.vector.Vector3d;
 import com.hypixel.hytale.server.core.entity.entities.Player;
 import com.hypixel.hytale.server.core.entity.entities.player.hud.HudManager;
+import com.hypixel.hytale.server.core.modules.entity.component.TransformComponent;
 import com.hypixel.hytale.server.core.universe.PlayerRef;
 import com.hypixel.hytale.server.core.universe.world.World;
 import com.hypixel.hytale.server.core.universe.world.storage.EntityStore;
 import com.hypixel.hytale.server.core.HytaleServer;
+// Correct UUIDComponent import:
+import com.hypixel.hytale.server.core.entity.UUIDComponent;
 
 import javax.annotation.Nonnull;
 import java.util.Map;
+import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 
 /**
  * AutoScoreboardSystem
+ *
  * - Attaches ScoreboardHud after a short delay and schedules periodic refreshes.
- * - Uses the ScoreboardHud API (setServerName,setGold,setRank,setPlaytime,setCoords,setFooter).
+ * - Playtime is persisted across sessions using PlaytimeStore.
+ * - Coords update frequency: once per second (tunable).
  */
 public final class AutoScoreboardSystem extends RefSystem<EntityStore> {
     private static final HytaleLogger LOGGER = HytaleLogger.forEnclosingClass();
 
+    // Scheduled updater tasks per player ref
     private final Map<Ref<EntityStore>, ScheduledFuture<?>> updaters = new ConcurrentHashMap<>();
+
+    // Join timestamps (ms) used to compute session playtime
+    private final Map<Ref<EntityStore>, Long> joinTimestamps = new ConcurrentHashMap<>();
+
+    // Mapping from ref -> player UUID for persistence & bookkeeping
+    private final Map<Ref<EntityStore>, UUID> refToUuid = new ConcurrentHashMap<>();
+
+    // Playtime persistence store
+    private final PlaytimeStore playtimeStore = new PlaytimeStore();
+
+    // Refresh freq in seconds (1s for responsive coords)
+    private static final long REFRESH_PERIOD_SECONDS = 1L;
+
+    public AutoScoreboardSystem() {
+        // Load persisted playtimes at construction so store is ready when players join
+        try {
+            playtimeStore.load();
+        } catch (Throwable t) {
+            // best-effort
+        }
+    }
 
     @Nonnull
     @Override
@@ -60,7 +89,19 @@ public final class AutoScoreboardSystem extends RefSystem<EntityStore> {
         if (hudManager == null) return;
         if (hudManager.getCustomHud() instanceof ScoreboardHud) return;
 
-        // We schedule a short delay, then execute on the world thread (safe attach)
+        // Attempt to get player UUID (persistent key) if available via UUIDComponent
+        UUID playerUuid = null;
+        try {
+            UUIDComponent uuidComponent = (UUIDComponent) commandBuffer.getComponent(ref, UUIDComponent.getComponentType());
+            if (uuidComponent != null) playerUuid = uuidComponent.getUuid();
+        } catch (Throwable ignored) {}
+
+        // Record join timestamp immediately (used for session playtime)
+        long joinedMs = System.currentTimeMillis();
+        joinTimestamps.put(ref, joinedMs);
+        if (playerUuid != null) refToUuid.put(ref, playerUuid);
+
+        // We schedule a short delay, then execute on the world thread to attach the HUD safely
         EntityStore external = (EntityStore) store.getExternalData();
         World world = external.getWorld();
         HytaleServer.SCHEDULED_EXECUTOR.schedule(() -> {
@@ -77,32 +118,52 @@ public final class AutoScoreboardSystem extends RefSystem<EntityStore> {
                     if (hm.getCustomHud() instanceof ScoreboardHud) return;
 
                     ScoreboardHud hud = new ScoreboardHud(pref);
+
+                    // Load persisted total playtime and show combined initial playtime
+                    long storedTotal = 0L;
+                    UUID uuid = refToUuid.get(ref);
+                    if (uuid != null) {
+                        storedTotal = playtimeStore.getTotalMillis(uuid);
+                    }
+
                     hud.setServerName("MyServer");
                     hud.setGold("Gold: 0");
                     hud.setRank("Rank: Member");
-                    hud.setPlaytime("Playtime: 0m");
+                    hud.setPlaytime(formatPlaytime(storedTotal + (System.currentTimeMillis() - joinedMs)));
                     hud.setCoords("Coords: 0, 0, 0");
                     hud.setFooter("www.example.server");
 
                     hm.setCustomHud(pref, hud);
                     hud.show();
 
-                    // schedule refresh task
+                    // schedule refresh task (every REFRESH_PERIOD_SECONDS seconds)
                     ScheduledFuture<?> future = HytaleServer.SCHEDULED_EXECUTOR.scheduleAtFixedRate(() -> {
                         world.execute(() -> {
                             try {
                                 if (!ref.isValid()) return;
-                                // TODO: replace with real data lookups
-                                hud.setGold("Gold: 0");
-                                hud.setRank("Rank: Member");
-                                hud.setPlaytime("Playtime: 0m");
-                                hud.setCoords("Coords: 0, 0, 0");
+
+                                // Update coords from TransformComponent
+                                TransformComponent transform = (TransformComponent) store.getComponent(ref, TransformComponent.getComponentType());
+                                if (transform != null) {
+                                    Vector3d pos = transform.getPosition();
+                                    int x = (int) Math.floor(pos.getX());
+                                    int y = (int) Math.floor(pos.getY());
+                                    int z = (int) Math.floor(pos.getZ());
+                                    hud.setCoords(String.format("Coords: %d, %d, %d", x, y, z));
+                                }
+
+                                // Update playtime using stored total + session elapsed
+                                UUID u = refToUuid.get(ref);
+                                long stored = (u != null) ? playtimeStore.getTotalMillis(u) : 0L;
+                                long joined = joinTimestamps.getOrDefault(ref, System.currentTimeMillis());
+                                hud.setPlaytime(formatPlaytime(stored + (System.currentTimeMillis() - joined)));
+
                                 hud.refresh();
                             } catch (Throwable t) {
                                 LOGGER.atWarning().withCause(t).log("AutoScoreboard refresh failed");
                             }
                         });
-                    }, 5L, 5L, TimeUnit.SECONDS);
+                    }, REFRESH_PERIOD_SECONDS, REFRESH_PERIOD_SECONDS, TimeUnit.SECONDS);
 
                     updaters.put(ref, future);
 
@@ -120,8 +181,23 @@ public final class AutoScoreboardSystem extends RefSystem<EntityStore> {
             @Nonnull Store<EntityStore> store,
             @Nonnull CommandBuffer<EntityStore> commandBuffer
     ) {
+        // Cancel scheduled updater if present
         ScheduledFuture<?> fut = updaters.remove(ref);
         if (fut != null) fut.cancel(false);
+
+        // Persist playtime: add session elapsed to stored total and save
+        try {
+            UUID uuid = refToUuid.remove(ref);
+            Long joined = joinTimestamps.remove(ref);
+            if (uuid != null && joined != null) {
+                long sessionElapsed = Math.max(0L, System.currentTimeMillis() - joined);
+                playtimeStore.addMillis(uuid, sessionElapsed);
+                // persist immediately to disk
+                playtimeStore.save();
+            }
+        } catch (Throwable t) {
+            LOGGER.atWarning().withCause(t).log("Failed to persist playtime on remove");
+        }
 
         try {
             Player p = (Player) store.getComponent(ref, Player.getComponentType());
@@ -134,6 +210,22 @@ public final class AutoScoreboardSystem extends RefSystem<EntityStore> {
             }
         } catch (Throwable t) {
             LOGGER.atWarning().withCause(t).log("AutoScoreboard cleanup failed");
+        }
+    }
+
+    /**
+     * Format playtime string from milliseconds (total across sessions)
+     * into "Playtime: Xh Ym" or "Playtime: Xm".
+     */
+    private static String formatPlaytime(long totalMillis) {
+        long totalSeconds = totalMillis / 1000L;
+        long hours = totalSeconds / 3600L;
+        long minutes = (totalSeconds % 3600L) / 60L;
+
+        if (hours > 0) {
+            return String.format("Playtime: %dh %dm", hours, minutes);
+        } else {
+            return String.format("Playtime: %dm", Math.max(0L, minutes));
         }
     }
 }
