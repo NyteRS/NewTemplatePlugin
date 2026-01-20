@@ -10,15 +10,13 @@ import javax.annotation.Nonnull;
 /**
  * ScoreboardHud — asset-driven HUD that appends Pages/Scoreboard.ui and exposes simple setters.
  *
- * Use setServerName / setGold / setRank / setPlaytime / setCoords / setFooter then call refresh() to update.
- *
- * Fields are volatile to make cross-thread visibility safer when values are updated from other threads,
- * but all HUD writes should still be performed on the player's world thread.
+ * Fields are volatile to make cross-thread visibility safer; HUD writes should still be performed on the
+ * player's world thread (the system will call refresh() on the world/entity tick thread).
  */
-public class ScoreboardHud extends CustomUIHud {
+public final class ScoreboardHud extends CustomUIHud {
     private static final HytaleLogger LOGGER = HytaleLogger.forEnclosingClass();
 
-    // Default server values updated to Darkvale
+    // Cached values the server maintains and sends to client
     private volatile String serverName = "Darkvale";
     private volatile String gold = "Gold: 0";
     private volatile String rank = "Rank: Member";
@@ -32,31 +30,35 @@ public class ScoreboardHud extends CustomUIHud {
 
     @Override
     protected void build(@Nonnull UICommandBuilder commandBuilder) {
-        // Append the UI asset (must be at resources/Common/UI/Custom/Pages/Scoreboard.ui)
+        // Append the UI asset (adjust path if you move Scoreboard.ui)
         commandBuilder.append("Pages/Scoreboard.ui");
 
-        // Set initial values (selectors must match the IDs declared in the .ui)
+        // Populate fields — these selectors must match your Scoreboard.ui
         commandBuilder.set("#ScoreboardRoot #ServerName.Text", serverName);
         commandBuilder.set("#ScoreboardRoot #Gold.Text", gold);
         commandBuilder.set("#ScoreboardRoot #Rank.Text", rank);
         commandBuilder.set("#ScoreboardRoot #Playtime.Text", playtime);
         commandBuilder.set("#ScoreboardRoot #Coords.Text", coords);
         commandBuilder.set("#ScoreboardRoot #Footer.Text", footer);
+
+        // Ensure root visible
+        commandBuilder.set("#ScoreboardRoot.Visible", true);
     }
 
-    // API setters
-    public void setServerName(String s) { this.serverName = s; }
-    public void setGold(String s) { this.gold = s; }
-    public void setRank(String s) { this.rank = s; }
-    public void setPlaytime(String s) { this.playtime = s; }
-    public void setCoords(String s) { this.coords = s; }
-    public void setFooter(String s) { this.footer = s; }
+    // -------------------------
+    // Setters (update server cache)
+    // -------------------------
+    public void setServerName(@Nonnull String s) { this.serverName = s; }
+    public void setGold(@Nonnull String s) { this.gold = s; }
+    public void setRank(@Nonnull String s) { this.rank = s; }
+    public void setPlaytime(@Nonnull String s) { this.playtime = s; }
+    public void setCoords(@Nonnull String s) { this.coords = s; }
+    public void setFooter(@Nonnull String s) { this.footer = s; }
 
     /**
      * Incremental update of the text fields. Call after modifying fields above.
      *
-     * Note: refresh must be called on the player's current world thread or after ensuring the PlayerRef's
-     * packet handler is available. Callers should wrap refresh via world.execute(...) for the current world.
+     * Must be called on the player's current world thread.
      */
     public void refresh() {
         UICommandBuilder b = new UICommandBuilder();

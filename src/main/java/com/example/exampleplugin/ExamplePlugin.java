@@ -1,5 +1,6 @@
 package com.example.exampleplugin;
 
+import com.example.exampleplugin.simpledebuginfohud.data.ScoreboardManager;
 import com.hypixel.hytale.component.ComponentRegistryProxy;
 import com.hypixel.hytale.component.Ref;
 import com.hypixel.hytale.component.Store;
@@ -15,7 +16,7 @@ import com.hypixel.hytale.server.core.HytaleServer;
 import com.example.exampleplugin.simpledebuginfohud.command.DebugCommand;
 import com.example.exampleplugin.simpledebuginfohud.data.DebugManager;
 import com.example.exampleplugin.simpledebuginfohud.hud.DebugHudSystem;
-
+import com.example.exampleplugin.simpledebuginfohud.command.ScoreboardCommand;
 import javax.annotation.Nonnull;
 import java.util.concurrent.TimeUnit;
 import java.util.logging.Level;
@@ -45,15 +46,17 @@ public class ExamplePlugin extends JavaPlugin {
         this.getLogger().at(Level.INFO).log("Use /debug to toggle the debug HUD.");
         // Register bleed damage event handler so dagger hits add bleed stacks
         registry.registerSystem(new BleedSystems.BleedOnDamage());
-
+        ScoreboardManager scoreboardManager = new ScoreboardManager();
+        //this.getEntityStoreRegistry().registerSystem(new AutoScoreboardSystem(scoreboardManager));
+        this.getCommandRegistry().registerCommand(new ScoreboardCommand(this, scoreboardManager));
+        this.getLogger().at(Level.INFO).log("Auto-scoreboard command /autoscoreboard registered.");
         // Commands
         this.getCommandRegistry().registerCommand(new TestRankCommand());
         this.getCommandRegistry().registerCommand(new DungeonUICommand());
-        this.getCommandRegistry().registerCommand(new ScoreboardCommand());
 
         // Register persistent / ticking systems on the entity-store registry (per-world)
         // AutoScoreboardSystem handles HUD updates
-        //this.getEntityStoreRegistry().registerSystem(new AutoScoreboardSystem());
+       // this.getEntityStoreRegistry().registerSystem(new AutoScoreboardSystem());
 
         // Register the bleed ticking system so periodic bleed damage is applied
         this.getEntityStoreRegistry().registerSystem(new BleedSystems.BleedTicking());

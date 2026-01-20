@@ -1,58 +1,48 @@
 package com.example.exampleplugin;
 
-import com.hypixel.hytale.component.AddReason;
+import com.hypixel.hytale.component.ArchetypeChunk;
 import com.hypixel.hytale.component.CommandBuffer;
-import com.hypixel.hytale.component.ComponentType;
+import com.hypixel.hytale.component.Holder;
 import com.hypixel.hytale.component.Ref;
-import com.hypixel.hytale.component.RemoveReason;
 import com.hypixel.hytale.component.Store;
 import com.hypixel.hytale.component.query.Query;
-import com.hypixel.hytale.component.system.RefSystem;
 import com.hypixel.hytale.logger.HytaleLogger;
 import com.hypixel.hytale.math.vector.Vector3d;
 import com.hypixel.hytale.server.core.entity.entities.Player;
 import com.hypixel.hytale.server.core.entity.entities.player.hud.HudManager;
 import com.hypixel.hytale.server.core.modules.entity.component.TransformComponent;
 import com.hypixel.hytale.server.core.universe.PlayerRef;
-import com.hypixel.hytale.server.core.universe.world.World;
 import com.hypixel.hytale.server.core.universe.world.storage.EntityStore;
 import com.hypixel.hytale.server.core.HytaleServer;
-
-// Correct UUIDComponent import (server core entity package)
+import com.hypixel.hytale.server.core.universe.world.World;
 import com.hypixel.hytale.server.core.entity.UUIDComponent;
-
-// LuckPerms API (cached fast-path usage; guarded)
-import net.luckperms.api.LuckPerms;
-import net.luckperms.api.LuckPermsProvider;
-import net.luckperms.api.model.user.User;
-
+import com.hypixel.hytale.component.ComponentType;
+import com.hypixel.hytale.server.core.entity.EntityUtils;
+import com.hypixel.hytale.component.system.tick.EntityTickingSystem;
 import javax.annotation.Nonnull;
 import java.lang.reflect.Method;
+import java.text.DecimalFormat;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 
 /**
- * AutoScoreboardSystem — cached-only LuckPerms integration + permission-node fallback and event-driven updates.
+ * AutoScoreboardSystem reimplemented in the ticking style used by your working DebugHudSystem.
  *
- * Behavior improvements:
- * - On each periodic tick we resolve the current Store/World/Player/PlayerRef and run updates on that world's thread.
- * - If the HUD is attached but bound to a different PlayerRef (e.g. after an instance transfer), we re-create and attach
- *   a new ScoreboardHud for the current PlayerRef, copying server-side cached values rather than relying on old instance.
- * - Periodic updaters cancel themselves when the player or HUD is no longer present.
- * - All hud.show()/hud.refresh() calls are guarded with safe checks to avoid NullPointerExceptions when the player is mid-transfer.
+ * - Maintains a per-PlayerRef ScoreboardHud and updates it from live components each tick.
+ * - Recreates and re-attaches HUDs when PlayerRef changes (so HUDs are always bound to the current instance/world).
+ * - Persists playtime when a player is removed.
  */
-public final class AutoScoreboardSystem extends RefSystem<EntityStore> {
+public final class AutoScoreboardSystem extends EntityTickingSystem<EntityStore> {
     private static final HytaleLogger LOGGER = HytaleLogger.forEnclosingClass();
 
-    private final Map<Ref<EntityStore>, ScheduledFuture<?>> updaters = new ConcurrentHashMap<>();
-    private final Map<Ref<EntityStore>, Long> joinTimestamps = new ConcurrentHashMap<>();
-    private final Map<Ref<EntityStore>, UUID> refToUuid = new ConcurrentHashMap<>();
-    private final Map<Ref<EntityStore>, String> lastKnownRank = new ConcurrentHashMap<>();
+    private final Map<PlayerRef, ScoreboardHud> huds = new ConcurrentHashMap<>();
+    private final Map<PlayerRef, Long> joinTimestamps = new ConcurrentHashMap<>();
+    private final Map<PlayerRef, UUID> refToUuid = new ConcurrentHashMap<>();
+    private final Map<PlayerRef, String> lastKnownRank = new ConcurrentHashMap<>();
 
     private final PlaytimeStore playtimeStore = new PlaytimeStore();
 
@@ -67,7 +57,9 @@ public final class AutoScoreboardSystem extends RefSystem<EntityStore> {
         PERMISSION_RANK_MAP.put("group.member", "Member");
     }
 
-    private static final long REFRESH_PERIOD_SECONDS = 1L;
+    private static final DecimalFormat BALANCE_FMT = new DecimalFormat("#,##0.##");
+
+    private final Query<EntityStore> query;
 
     public AutoScoreboardSystem() {
         try {
@@ -76,349 +68,167 @@ public final class AutoScoreboardSystem extends RefSystem<EntityStore> {
             LOGGER.atWarning().withCause(t).log("Failed to load playtime store");
         }
 
-        // Attempt to register LP event listener reflectively (safe if LP classes are missing)
+        // safe query construction like DebugHudSystem — avoid null Query
+        ComponentType<EntityStore, PlayerRef> playerRefType = PlayerRef.getComponentType();
+        ComponentType<EntityStore, Player> playerType = Player.getComponentType();
+        if (playerRefType == null || playerType == null) {
+            this.query = Query.any();
+        } else {
+            @SuppressWarnings("unchecked")
+            Query<EntityStore> q = (Query<EntityStore>) Query.and(new Query[] { (Query) playerRefType, (Query) playerType });
+            this.query = q;
+        }
+
         tryRegisterLuckPermsEventListener();
     }
 
     @Nonnull
     @Override
     public Query<EntityStore> getQuery() {
-        ComponentType<EntityStore, PlayerRef> playerRefType = PlayerRef.getComponentType();
-        ComponentType<EntityStore, Player> playerType = Player.getComponentType();
-        if (playerRefType == null || playerType == null) return Query.any();
-        @SuppressWarnings("unchecked")
-        Query<EntityStore> q = (Query<EntityStore>) Query.and(new Query[] { (Query) playerRefType, (Query) playerType });
-        return q;
+        return this.query;
     }
 
     @Override
-    public void onEntityAdded(
-            @Nonnull Ref<EntityStore> ref,
-            @Nonnull AddReason reason,
-            @Nonnull Store<EntityStore> store,
-            @Nonnull CommandBuffer<EntityStore> commandBuffer
-    ) {
-        Player playerComponent = (Player) commandBuffer.getComponent(ref, Player.getComponentType());
-        if (playerComponent == null) return;
-
-        PlayerRef playerRefComponent = (PlayerRef) commandBuffer.getComponent(ref, PlayerRef.getComponentType());
-        if (playerRefComponent == null) return;
-
-        HudManager hudManager = playerComponent.getHudManager();
-        if (hudManager == null) return;
-        if (hudManager.getCustomHud() instanceof ScoreboardHud) return;
-
-        // Fast-path: try to obtain UUID from commandBuffer
-        UUID playerUuid = null;
+    public void tick(float deltaTime, int entityIndex, @Nonnull ArchetypeChunk<EntityStore> chunk, @Nonnull Store<EntityStore> store, @Nonnull CommandBuffer<EntityStore> commandBuffer) {
         try {
-            UUIDComponent uuidComponent = (UUIDComponent) commandBuffer.getComponent(ref, UUIDComponent.getComponentType());
-            if (uuidComponent != null) playerUuid = uuidComponent.getUuid();
-        } catch (Throwable ignored) {}
+            Holder<EntityStore> holder = EntityUtils.toHolder(entityIndex, chunk);
+            Player player = (Player) holder.getComponent(Player.getComponentType());
+            PlayerRef playerRef = (PlayerRef) holder.getComponent(PlayerRef.getComponentType());
+            if (player == null || playerRef == null) return;
 
-        long joinedMs = System.currentTimeMillis();
-        joinTimestamps.put(ref, joinedMs);
-        if (playerUuid != null) refToUuid.put(ref, playerUuid);
+            Ref<EntityStore> ref = chunk.getReferenceTo(entityIndex);
 
-        EntityStore external = (EntityStore) store.getExternalData();
-        World world = external.getWorld();
-
-        HytaleServer.SCHEDULED_EXECUTOR.schedule(() -> {
-            // initial attach must run on the player's world thread
-            world.execute(() -> {
-                try {
-                    if (!ref.isValid()) return;
-
-                    // Re-check components on world thread and ensure UUID present
-                    Player p = (Player) store.getComponent(ref, Player.getComponentType());
-                    PlayerRef pref = (PlayerRef) store.getComponent(ref, PlayerRef.getComponentType());
-                    if (p == null || pref == null) return;
-
-                    if (!refToUuid.containsKey(ref)) {
-                        try {
-                            UUIDComponent storeUuid = (UUIDComponent) store.getComponent(ref, UUIDComponent.getComponentType());
-                            if (storeUuid != null) refToUuid.put(ref, storeUuid.getUuid());
-                        } catch (Throwable ignored) {}
-                    }
-
-                    HudManager hm = p.getHudManager();
-                    if (hm == null) return;
-                    if (hm.getCustomHud() instanceof ScoreboardHud) return;
-
-                    ScoreboardHud hud = new ScoreboardHud(pref);
-
-                    long storedTotal = 0L;
-                    UUID uuid = refToUuid.get(ref);
-                    if (uuid != null) storedTotal = playtimeStore.getTotalMillis(uuid);
-
-                    hud.setServerName("Darkvale");
-                    hud.setGold("Gold: 0");
-                    hud.setPlaytime(formatPlaytime(storedTotal + (System.currentTimeMillis() - joinedMs)));
-                    hud.setCoords("Coords: 0, 0, 0");
-                    hud.setFooter("www.darkvale.com");
-
-                    hm.setCustomHud(pref, hud);
-
-                    // hud.show() may attempt a write; guard it
-                    try {
-                        if (pref.getPacketHandler() != null) {
-                            hud.show();
-                        } else {
-                            LOGGER.atInfo().log("[AUTOSCORE] packetHandler null on initial attach; skipping hud.show()");
-                        }
-                    } catch (Throwable t) {
-                        LOGGER.atWarning().withCause(t).log("[AUTOSCORE] hud.show() threw during attach");
-                    }
-
-                    // 1) Try LuckPerms cached fast-path
-                    String rankText = tryLuckPermsCachedRank(uuid);
-                    if (rankText != null) {
-                        lastKnownRank.put(ref, rankText);
-                        hud.setRank(rankText);
-                        safeRefreshOnWorld(pref, hud);
-                        LOGGER.atInfo().log("[AUTOSCORE] LP cached fast-path resolved for uuid=%s", uuid);
-                    } else {
-                        // 2) Try permission-node based fallback using Player.hasPermission(...)
-                        String permRank = tryPermissionRank(p);
-                        if (permRank != null) {
-                            rankText = permRank;
-                            lastKnownRank.put(ref, rankText);
-                            hud.setRank(rankText);
-                            safeRefreshOnWorld(pref, hud);
-                            LOGGER.atInfo().log("[AUTOSCORE] Permission fallback applied for ref=%s rank=%s", ref, rankText);
-                        } else {
-                            // final fallback
-                            rankText = "Rank: Member";
-                            lastKnownRank.put(ref, rankText);
-                            hud.setRank(rankText);
-                            safeRefreshOnWorld(pref, hud);
-                            LOGGER.atInfo().log("[AUTOSCORE] Using fallback rank for uuid=%s", uuid);
-                        }
-                    }
-
-                    // schedule periodic refresh task (coords/playtime + cheap cached LP checks + permission fallback)
-                    ScheduledFuture<?> future = HytaleServer.SCHEDULED_EXECUTOR.scheduleAtFixedRate(() -> {
-                        try {
-                            // If ref invalid, cancel and cleanup
-                            if (!ref.isValid()) {
-                                ScheduledFuture<?> fut = updaters.remove(ref);
-                                if (fut != null) fut.cancel(false);
-                                return;
-                            }
-
-                            // Resolve the current store & world for this ref on each tick (avoid captured stale world)
-                            Store<EntityStore> curStore = ref.getStore();
-                            if (curStore == null) return;
-                            EntityStore externalNow = (EntityStore) curStore.getExternalData();
-                            if (externalNow == null) return;
-                            World curWorld = externalNow.getWorld();
-                            if (curWorld == null) return;
-
-                            // Dispatch work to the current world's thread
-                            curWorld.execute(() -> {
-                                try {
-                                    if (!ref.isValid()) {
-                                        ScheduledFuture<?> fut = updaters.remove(ref);
-                                        if (fut != null) fut.cancel(false);
-                                        return;
-                                    }
-
-                                    // Re-fetch live components from the current store
-                                    Player pNow = (Player) curStore.getComponent(ref, Player.getComponentType());
-                                    PlayerRef prefNow = (PlayerRef) curStore.getComponent(ref, PlayerRef.getComponentType());
-                                    if (pNow == null || prefNow == null) {
-                                        // Player missing on this ref — cancel periodic updates
-                                        ScheduledFuture<?> fut = updaters.remove(ref);
-                                        if (fut != null) fut.cancel(false);
-                                        return;
-                                    }
-
-                                    if (pNow.wasRemoved()) {
-                                        ScheduledFuture<?> fut = updaters.remove(ref);
-                                        if (fut != null) fut.cancel(false);
-                                        return;
-                                    }
-
-                                    HudManager hmNow = pNow.getHudManager();
-                                    if (hmNow == null) {
-                                        ScheduledFuture<?> fut = updaters.remove(ref);
-                                        if (fut != null) fut.cancel(false);
-                                        return;
-                                    }
-
-                                    // If HUD is not a ScoreboardHud or is a ScoreboardHud bound to a different PlayerRef, re-create it
-                                    boolean recreateHud = false;
-                                    ScoreboardHud hudNow = null;
-                                    if (!(hmNow.getCustomHud() instanceof ScoreboardHud)) {
-                                        recreateHud = true;
-                                    } else {
-                                        hudNow = (ScoreboardHud) hmNow.getCustomHud();
-                                        // If the attached hud's PlayerRef doesn't match the current PlayerRef, recreate
-                                        try {
-                                            PlayerRef attachedRef = hudNow.getPlayerRef();
-                                            if (attachedRef == null || attachedRef != prefNow) {
-                                                recreateHud = true;
-                                            }
-                                        } catch (Throwable ignored) {
-                                            recreateHud = true;
-                                        }
-                                    }
-
-                                    if (recreateHud) {
-                                        // Create a fresh HUD bound to the current PlayerRef and copy cached server-side values
-                                        ScoreboardHud newHud = new ScoreboardHud(prefNow);
-
-                                        UUID u = refToUuid.get(ref);
-                                        long stored = (u != null) ? playtimeStore.getTotalMillis(u) : 0L;
-                                        long joinedNow = joinTimestamps.getOrDefault(ref, System.currentTimeMillis());
-
-                                        newHud.setServerName("Darkvale");
-                                        newHud.setGold("Gold: 0");
-                                        newHud.setPlaytime(formatPlaytime(stored + (System.currentTimeMillis() - joinedNow)));
-                                        newHud.setCoords("Coords: 0, 0, 0");
-                                        newHud.setFooter("www.darkvale.com");
-
-                                        String lastRank = lastKnownRank.get(ref);
-                                        if (lastRank != null) newHud.setRank(lastRank);
-
-                                        try {
-                                            hmNow.setCustomHud(prefNow, newHud);
-                                            if (prefNow.getPacketHandler() != null) {
-                                                newHud.show();
-                                            } else {
-                                                LOGGER.atInfo().log("[AUTOSCORE] packetHandler null on HUD recreate; skipping show()");
-                                            }
-                                        } catch (Throwable t) {
-                                            LOGGER.atWarning().withCause(t).log("[AUTOSCORE] Failed to attach recreated HUD");
-                                        }
-
-                                        hudNow = newHud;
-                                    }
-
-                                    if (hudNow == null) {
-                                        // Nothing to refresh
-                                        return;
-                                    }
-
-                                    // Update coords if transform available
-                                    TransformComponent transform = (TransformComponent) curStore.getComponent(ref, TransformComponent.getComponentType());
-                                    if (transform != null) {
-                                        Vector3d pos = transform.getPosition();
-                                        hudNow.setCoords(String.format("Coords: %d, %d, %d",
-                                                (int) Math.floor(pos.getX()),
-                                                (int) Math.floor(pos.getY()),
-                                                (int) Math.floor(pos.getZ())));
-                                    }
-
-                                    // Update playtime
-                                    UUID u = refToUuid.get(ref);
-                                    long stored = (u != null) ? playtimeStore.getTotalMillis(u) : 0L;
-                                    long joinedNow = joinTimestamps.getOrDefault(ref, System.currentTimeMillis());
-                                    hudNow.setPlaytime(formatPlaytime(stored + (System.currentTimeMillis() - joinedNow)));
-
-                                    // Rank resolution: try LP cached, then permission fallback via Player obtained from current store
-                                    String newRank = null;
-                                    try {
-                                        newRank = tryLuckPermsCachedRank(u);
-                                    } catch (Throwable ignored) {}
-
-                                    if (newRank == null) {
-                                        try {
-                                            Player pRe = (Player) curStore.getComponent(ref, Player.getComponentType());
-                                            if (pRe != null) {
-                                                newRank = tryPermissionRank(pRe);
-                                            }
-                                        } catch (Throwable ignored) {}
-                                    }
-
-                                    if (newRank == null) newRank = "Rank: Member";
-
-                                    String last = lastKnownRank.get(ref);
-                                    if (last == null || !last.equals(newRank)) {
-                                        lastKnownRank.put(ref, newRank);
-                                        hudNow.setRank(newRank);
-                                    }
-
-                                    // Use safe refresh that checks PlayerRef/PacketHandler and catches exceptions
-                                    safeRefreshOnWorld(prefNow, hudNow);
-
-                                } catch (Throwable t) {
-                                    LOGGER.atWarning().withCause(t).log("[AUTOSCORE] Periodic refresh failed");
-                                }
-                            });
-                        } catch (Throwable t) {
-                            LOGGER.atWarning().withCause(t).log("[AUTOSCORE] Periodic updater outer failed");
-                        }
-                    }, REFRESH_PERIOD_SECONDS, REFRESH_PERIOD_SECONDS, TimeUnit.SECONDS);
-
-                    updaters.put(ref, future);
-
-                } catch (Throwable t) {
-                    LOGGER.atWarning().withCause(t).log("[AUTOSCORE] Attach sequence exception");
+            // If player removed, cleanup
+            try {
+                if (player.wasRemoved() || ref == null || !ref.isValid()) {
+                    cleanupForRef(playerRef, ref, store);
+                    return;
                 }
-            });
-        }, 350L, TimeUnit.MILLISECONDS);
+            } catch (Throwable ignored) {}
+
+            // Ensure we have a tracked hud for this PlayerRef
+            ScoreboardHud hud = huds.get(playerRef);
+            if (hud == null) {
+                hud = new ScoreboardHud(playerRef);
+                hud.setServerName("Darkvale");
+                hud.setGold("Gold: 0");
+                hud.setRank("Rank: Member");
+                hud.setPlaytime("Playtime: 0m");
+                hud.setCoords("Coords: 0, 0, 0");
+                hud.setFooter("www.darkvale.com");
+                huds.put(playerRef, hud);
+
+                // persist uuid if available and set join timestamp
+                try {
+                    UUIDComponent uuidComp = (UUIDComponent) store.getComponent(ref, UUIDComponent.getComponentType());
+                    if (uuidComp != null) refToUuid.put(playerRef, uuidComp.getUuid());
+                } catch (Throwable ignored) {}
+                joinTimestamps.put(playerRef, System.currentTimeMillis());
+
+                // Attach hud on this world thread
+                try {
+                    HudManager hm = player.getHudManager();
+                    if (hm != null) {
+                        hm.setCustomHud(playerRef, hud);
+                        try {
+                            if (playerRef.getPacketHandler() != null) hud.show();
+                        } catch (Throwable t) {
+                            LOGGER.atWarning().withCause(t).log("[AUTOSCORE] hud.show() failed on attach");
+                        }
+                    }
+                } catch (Throwable t) {
+                    LOGGER.atWarning().withCause(t).log("[AUTOSCORE] Failed to attach hud for playerRef");
+                }
+
+                // Try to resolve and set rank initially
+                UUID uuid = refToUuid.get(playerRef);
+                String rankText = tryLuckPermsCachedRank(uuid);
+                if (rankText == null) rankText = tryPermissionRank(player);
+                if (rankText == null) rankText = "Rank: Member";
+                lastKnownRank.put(playerRef, rankText);
+                hud.setRank(rankText);
+                // safe refresh
+                try { if (playerRef.getPacketHandler() != null) hud.refresh(); } catch (Throwable ignored) {}
+            }
+
+            // Update coords if transform present
+            TransformComponent transform = (TransformComponent) holder.getComponent(TransformComponent.getComponentType());
+            if (transform != null) {
+                Vector3d pos = transform.getPosition();
+                hud.setCoords(String.format("Coords: %d, %d, %d",
+                        (int) Math.floor(pos.getX()),
+                        (int) Math.floor(pos.getY()),
+                        (int) Math.floor(pos.getZ())));
+            }
+
+            // Update playtime
+            UUID u = refToUuid.get(playerRef);
+            long stored = (u != null) ? playtimeStore.getTotalMillis(u) : 0L;
+            long joined = joinTimestamps.getOrDefault(playerRef, System.currentTimeMillis());
+            hud.setPlaytime(formatPlaytime(stored + (System.currentTimeMillis() - joined)));
+
+            // Rank check (cheap cached LP fast-path, else permission fallback)
+            String newRank = null;
+            try {
+                newRank = tryLuckPermsCachedRank(u);
+            } catch (Throwable ignored) {}
+            if (newRank == null) {
+                try {
+                    newRank = tryPermissionRank(player);
+                } catch (Throwable ignored) {}
+            }
+            if (newRank == null) newRank = "Rank: Member";
+
+            String last = lastKnownRank.get(playerRef);
+            if (last == null || !last.equals(newRank)) {
+                lastKnownRank.put(playerRef, newRank);
+                hud.setRank(newRank);
+            }
+
+            // Refresh HUD (only if packet handler is available)
+            try {
+                if (playerRef.getPacketHandler() != null) {
+                    hud.refresh();
+                }
+            } catch (Throwable ignored) {
+                // skip refresh if packet handler not available or something goes wrong
+            }
+
+        } catch (Throwable t) {
+            LOGGER.atWarning().withCause(t).log("[AUTOSCORE] Tick error");
+        }
     }
 
-    @Override
-    public void onEntityRemove(
-            @Nonnull Ref<EntityStore> ref,
-            @Nonnull RemoveReason reason,
-            @Nonnull Store<EntityStore> store,
-            @Nonnull CommandBuffer<EntityStore> commandBuffer
-    ) {
-        ScheduledFuture<?> fut = updaters.remove(ref);
-        if (fut != null) fut.cancel(false);
-
-        lastKnownRank.remove(ref);
-
+    private void cleanupForRef(PlayerRef playerRef, Ref<EntityStore> ref, Store<EntityStore> store) {
         try {
-            UUID uuid = refToUuid.remove(ref);
-            Long joined = joinTimestamps.remove(ref);
-            if (uuid != null && joined != null) {
+            // persist playtime
+            UUID u = refToUuid.remove(playerRef);
+            Long joined = joinTimestamps.remove(playerRef);
+            if (u != null && joined != null) {
                 long sessionElapsed = Math.max(0L, System.currentTimeMillis() - joined);
-                playtimeStore.addMillis(uuid, sessionElapsed);
+                playtimeStore.addMillis(u, sessionElapsed);
                 playtimeStore.save();
             }
         } catch (Throwable t) {
-            LOGGER.atWarning().withCause(t).log("[AUTOSCORE] Failed to persist playtime on remove");
+            LOGGER.atWarning().withCause(t).log("[AUTOSCORE] Failed to persist playtime on cleanup");
         }
 
         try {
-            Player p = (Player) store.getComponent(ref, Player.getComponentType());
-            PlayerRef pref = (PlayerRef) store.getComponent(ref, PlayerRef.getComponentType());
-            if (p != null && pref != null) {
-                HudManager hm = p.getHudManager();
-                if (hm != null && hm.getCustomHud() instanceof ScoreboardHud) {
-                    hm.setCustomHud(pref, null);
-                }
+            // detach HUD if present
+            ScoreboardHud s = huds.remove(playerRef);
+            if (s != null && ref != null && ref.isValid() && store != null) {
+                try {
+                    Player p = (Player) store.getComponent(ref, Player.getComponentType());
+                    if (p != null) {
+                        HudManager hm = p.getHudManager();
+                        if (hm != null && hm.getCustomHud() instanceof ScoreboardHud) {
+                            hm.setCustomHud(playerRef, null);
+                        }
+                    }
+                } catch (Throwable ignored) {}
             }
-        } catch (Throwable t) {
-            LOGGER.atWarning().withCause(t).log("[AUTOSCORE] Cleanup exception");
-        }
-    }
-
-    /**
-     * Safe refresh helper — checks that the ScoreboardHud's PlayerRef and PacketHandler are available
-     * and wraps refresh in a try/catch to avoid throwing NullReference exceptions when players transfer/disconnect.
-     *
-     * This variant is expected to be called on the target world's thread.
-     */
-    private void safeRefreshOnWorld(PlayerRef pr, ScoreboardHud hud) {
-        if (hud == null || pr == null) return;
-        try {
-            try {
-                if (pr.getPacketHandler() == null) {
-                    // Packet handler not available (player mid-transfer or disconnected)
-                    return;
-                }
-            } catch (Throwable ignored) {
-                // If any introspection fails, skip refresh
-                return;
-            }
-            hud.refresh();
-        } catch (Throwable t) {
-            LOGGER.atWarning().withCause(t).log("[AUTOSCORE] HUD refresh failed");
-        }
+            lastKnownRank.remove(playerRef);
+        } catch (Throwable ignored) {}
     }
 
     /**
@@ -428,12 +238,12 @@ public final class AutoScoreboardSystem extends RefSystem<EntityStore> {
     private String tryLuckPermsCachedRank(UUID uuid) {
         if (uuid == null) return null;
         try {
-            LuckPerms lp = LuckPermsProvider.get();
+            net.luckperms.api.LuckPerms lp = net.luckperms.api.LuckPermsProvider.get();
             if (lp == null) {
                 LOGGER.atInfo().log("[AUTOSCORE] LuckPermsProvider.get() returned null");
                 return null;
             }
-            User user = lp.getUserManager().getUser(uuid);
+            net.luckperms.api.model.user.User user = lp.getUserManager().getUser(uuid);
             if (user == null) return null;
             return buildRankText(user);
         } catch (NoClassDefFoundError ncdf) {
@@ -445,17 +255,12 @@ public final class AutoScoreboardSystem extends RefSystem<EntityStore> {
         }
     }
 
-    /**
-     * Permission-node fallback: check Player.hasPermission(node) for known nodes in PERMISSION_RANK_MAP.
-     * Returns "Rank: <Name>" or null if none matched or method not available.
-     */
     private String tryPermissionRank(Player p) {
         if (p == null) return null;
         for (Map.Entry<String, String> e : PERMISSION_RANK_MAP.entrySet()) {
             final String node = e.getKey();
             final String rankName = e.getValue();
             try {
-                // Try direct API first
                 try {
                     Method m = p.getClass().getMethod("hasPermission", String.class);
                     Object res = m.invoke(p, node);
@@ -463,29 +268,20 @@ public final class AutoScoreboardSystem extends RefSystem<EntityStore> {
                         return "Rank: " + rankName;
                     }
                 } catch (NoSuchMethodException ns) {
-                    // Some server APIs might expose a different method name; try a couple of alternatives reflectively
                     boolean has = false;
                     try {
                         Method alt = p.getClass().getMethod("hasPermissions", String.class);
                         Object r = alt.invoke(p, node);
                         if (r instanceof Boolean) has = (Boolean) r;
-                    } catch (Throwable ignoredAlt) {
-                        // final fallback: try a boolean field or skip
-                    }
+                    } catch (Throwable ignoredAlt) {}
                     if (has) return "Rank: " + rankName;
                 }
-            } catch (Throwable t) {
-                // If any reflection/invoke fails for one node, continue to next node silently
-            }
+            } catch (Throwable ignored) {}
         }
         return null;
     }
 
-    /**
-     * Build the rank text to display on the HUD from a LuckPerms User.
-     * Prefer cached prefix (if present) then append the primary group for clarity.
-     */
-    private static String buildRankText(@Nonnull User user) {
+    private static String buildRankText(@Nonnull net.luckperms.api.model.user.User user) {
         try {
             String primary = user.getPrimaryGroup();
             String prefix = null;
@@ -493,8 +289,7 @@ public final class AutoScoreboardSystem extends RefSystem<EntityStore> {
                 if (user.getCachedData() != null && user.getCachedData().getMetaData() != null) {
                     prefix = user.getCachedData().getMetaData().getPrefix();
                 }
-            } catch (Throwable ignored) { }
-
+            } catch (Throwable ignored) {}
             if (prefix != null && !prefix.isBlank()) {
                 return "Rank: " + prefix + " " + primary;
             } else {
@@ -516,9 +311,7 @@ public final class AutoScoreboardSystem extends RefSystem<EntityStore> {
         }
     }
 
-    // ---------------------------------------------------------------------
-    // Reflection-based registration for LuckPerms UserDataRecalculateEvent
-    // ---------------------------------------------------------------------
+    // Reflection-based registration for LuckPerms UserDataRecalculateEvent (keeps earlier behavior)
     private void tryRegisterLuckPermsEventListener() {
         try {
             Class<?> providerClass = Class.forName("net.luckperms.api.LuckPermsProvider");
@@ -560,9 +353,7 @@ public final class AutoScoreboardSystem extends RefSystem<EntityStore> {
         }
     }
 
-    /**
-     * Reflectively inspect the UserDataRecalculateEvent and update HUDs for the affected UUID.
-     */
+    // Reflective handler (updates lastKnownRank + huds when relevant)
     private void handleUserDataRecalculateEventReflective(Object event) {
         if (event == null) return;
         try {
@@ -570,7 +361,6 @@ public final class AutoScoreboardSystem extends RefSystem<EntityStore> {
             Object user = getUser.invoke(event);
             if (user == null) return;
 
-            // Resolve UUID (try multiple method names)
             UUID uuidLocal = null;
             try {
                 Method getUniqueId = user.getClass().getMethod("getUniqueId");
@@ -584,7 +374,6 @@ public final class AutoScoreboardSystem extends RefSystem<EntityStore> {
                 } catch (Throwable ignored) {}
             } catch (Throwable ignored) {}
 
-            // getPrimaryGroup()
             String primaryLocal = null;
             try {
                 Method getPrimary = user.getClass().getMethod("getPrimaryGroup");
@@ -592,7 +381,6 @@ public final class AutoScoreboardSystem extends RefSystem<EntityStore> {
                 if (primObj instanceof String) primaryLocal = (String) primObj;
             } catch (Throwable ignored) {}
 
-            // get prefix via cachedData -> getMetaData -> getPrefix
             String prefixLocal = null;
             try {
                 Method getCached = user.getClass().getMethod("getCachedData");
@@ -625,45 +413,23 @@ public final class AutoScoreboardSystem extends RefSystem<EntityStore> {
                 rankText = "Rank: Member";
             }
 
-            // Find matching attached refs and update their HUDs
-            for (Map.Entry<Ref<EntityStore>, UUID> e : refToUuid.entrySet()) {
-                final Ref<EntityStore> ref = e.getKey();
-                final UUID mappedUuid = e.getValue();
-                if (!uuid.equals(mappedUuid)) continue;
+            // Apply to matching huds
+            for (Map.Entry<PlayerRef, UUID> e : refToUuid.entrySet()) {
+                final PlayerRef pref = e.getKey();
+                final UUID mapped = e.getValue();
+                if (!uuid.equals(mapped)) continue;
 
-                try {
-                    final Store<EntityStore> store = ref.getStore();
-                    if (store == null) continue;
-                    final EntityStore external = (EntityStore) store.getExternalData();
-                    if (external == null) continue;
-                    final World world = external.getWorld();
-                    if (world == null) continue;
-
-                    world.execute(() -> {
-                        try {
-                            if (!ref.isValid()) return;
-                            final Store<EntityStore> s = ref.getStore();
-                            if (s == null) return;
-                            Player p = (Player) s.getComponent(ref, Player.getComponentType());
-                            PlayerRef pref = (PlayerRef) s.getComponent(ref, PlayerRef.getComponentType());
-                            if (p == null || pref == null) return;
-                            HudManager hm = p.getHudManager();
-                            if (hm == null) return;
-                            if (hm.getCustomHud() instanceof ScoreboardHud) {
-                                ScoreboardHud sb = (ScoreboardHud) hm.getCustomHud();
-                                String last = lastKnownRank.get(ref);
-                                if (last == null || !last.equals(rankText)) {
-                                    lastKnownRank.put(ref, rankText);
-                                    sb.setRank(rankText);
-                                    safeRefreshOnWorld(pref, sb);
-                                    LOGGER.atInfo().log("[AUTOSCORE] Applied LP event update for uuid=%s newRank=%s", uuid, rankText);
-                                }
-                            }
-                        } catch (Throwable t) {
-                            LOGGER.atWarning().withCause(t).log("[AUTOSCORE] Failed to apply LP event update for uuid=%s", uuid);
-                        }
-                    });
-                } catch (Throwable ignore) { /* swallow */ }
+                ScoreboardHud hud = huds.get(pref);
+                if (hud == null) continue;
+                String last = lastKnownRank.get(pref);
+                if (last == null || !last.equals(rankText)) {
+                    lastKnownRank.put(pref, rankText);
+                    hud.setRank(rankText);
+                    try {
+                        if (pref.getPacketHandler() != null) hud.refresh();
+                    } catch (Throwable ignored) {}
+                    LOGGER.atInfo().log("[AUTOSCORE] Applied LP event update for uuid=%s newRank=%s", uuid, rankText);
+                }
             }
         } catch (Throwable t) {
             LOGGER.atWarning().withCause(t).log("[AUTOSCORE] Error handling UserDataRecalculateEvent reflectively");
