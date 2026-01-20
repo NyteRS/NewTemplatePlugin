@@ -1,82 +1,80 @@
 Group #ScoreboardRoot {
-  // Right-aligned container. We center the content vertically using flexible spacers.
-  Anchor: (Right: 6);
+  // Full-height root anchored to the right edge so flex spacers can vertically center content.
+  Anchor: (Right: 12, Top: 0, Bottom: 0);
   LayoutMode: Top;
   Padding: (Full: 0);
 
-  // Top flexible spacer (pushes the HUD down)
+  // Top flexible spacer: pushes the outline down until center
   Group { FlexWeight: 1; }
 
-  // Outer outline (acts as a border)
+  // Outline container anchored to the right of the root; the outline draws the semi-opaque border
   Group #ScoreboardOutline {
-    Anchor: (Width: 220);
+    Anchor: (Right: 0, Width: 220);     // right-aligned within root
     LayoutMode: Top;
-    Padding: (Full: 2);                // border thickness
-    Background: #000000(0.65);        // border color + alpha (opaque border)
+    Padding: (Full: 2);                 // thickness of border
+    Background: #000000(0.55);          // semi-opaque border (alpha 0.55)
+
+    // Inner transparent content area
+    Group #ScoreboardInner {
+      Anchor: (Width: 216);
+      LayoutMode: Top;
+      Padding: (Full: 8);
+      Background: #000000(0.0);         // fully transparent center
+
+      // Server name/title
+      Label #ServerName {
+        Text: "MyServer";
+        Anchor: (Height: 20);
+        Style: (FontSize: 16, TextColor: #FFD23A, RenderBold: true);
+      }
+
+      Group { Anchor: (Height: 6); }
+
+      // Small header text
+      Label #Header {
+        Text: "PLAYER";
+        Anchor: (Height: 14);
+        Style: (FontSize: 12, TextColor: #BBBBBB, RenderBold: true);
+      }
+
+      Group { Anchor: (Height: 4); }
+
+      // Stats lines (these are the selectors the Java HUD uses)
+      Label #Gold {
+        Text: "Gold: 0";
+        Anchor: (Height: 16);
+        Style: (TextColor: #FFD700);
+      }
+
+      Label #Rank {
+        Text: "Rank: Member";
+        Anchor: (Height: 16);
+        Style: (TextColor: #FFFFFF);
+      }
+
+      Label #Playtime {
+        Text: "Playtime: 0m";
+        Anchor: (Height: 16);
+        Style: (TextColor: #FFFFFF);
+      }
+
+      Label #Coords {
+        Text: "Coords: 0, 0, 0";
+        Anchor: (Height: 16);
+        Style: (TextColor: #FFFFFF);
+      }
+
+      Group { Anchor: (Height: 6); }
+
+      // Footer
+      Label #Footer {
+        Text: "www.example.server";
+        Anchor: (Height: 14);
+        Style: (TextColor: #999999);
+      }
+    }
   }
 
-  // Inner transparent area (slightly smaller than the outline)
-  Group #ScoreboardInner {
-    Anchor: (Width: 214);
-    LayoutMode: Top;
-    Padding: (Full: 8);
-    Background: #000000(0.0);         // fully transparent interior
-  }
-
-  // The actual items inside the inner transparent area.
-  // Server name at the top (yellow/gold)
-  Label #ServerName {
-    Text: "SERVER NAME";
-    Anchor: (Height: 20);
-    Style: (FontSize: 16, TextColor: #FFD23A, RenderBold: true);
-  }
-
-  // Small spacer
-  Group { Anchor: (Height: 6); }
-
-  // Title (optional, small)
-  Label #Header {
-    Text: "PLAYER";
-    Anchor: (Height: 14);
-    Style: (FontSize: 12, TextColor: #cccccc, RenderBold: true);
-  }
-
-  Group { Anchor: (Height: 4); }
-
-  // Main info lines (these will be updated by the Java wrapper)
-  Label #Gold {
-    Text: "Gold: 0";
-    Anchor: (Height: 16);
-    Style: (TextColor: #FFD700);
-  }
-
-  Label #Rank {
-    Text: "Rank: Member";
-    Anchor: (Height: 16);
-    Style: (TextColor: #ffffff);
-  }
-
-  Label #Playtime {
-    Text: "Playtime: 0m";
-    Anchor: (Height: 16);
-    Style: (TextColor: #ffffff);
-  }
-
-  Label #Coords {
-    Text: "Coords: 0, 0, 0";
-    Anchor: (Height: 16);
-    Style: (TextColor: #ffffff);
-  }
-
-  Group { Anchor: (Height: 6); }
-
-  // Footer / small url or server message
-  Label #Footer {
-    Text: "www.example.server";
-    Anchor: (Height: 14);
-    Style: (TextColor: #999999);
-  }
-
-  // Bottom flexible spacer (pushes the HUD up), together with the top spacer centers vertically
+  // Bottom flexible spacer: pushes the outline up until center
   Group { FlexWeight: 1; }
 }

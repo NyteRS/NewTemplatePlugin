@@ -24,8 +24,8 @@ import java.util.concurrent.TimeUnit;
 
 /**
  * AutoScoreboardSystem
- * - Attaches ScoreboardHud and periodically refreshes it with placeholder data.
- * - Cancels scheduled updates on removal and clears the HUD.
+ * - Attaches ScoreboardHud after a short delay and schedules periodic refreshes.
+ * - Uses the ScoreboardHud API (setServerName,setGold,setRank,setPlaytime,setCoords,setFooter).
  */
 public final class AutoScoreboardSystem extends RefSystem<EntityStore> {
     private static final HytaleLogger LOGGER = HytaleLogger.forEnclosingClass();
@@ -52,6 +52,7 @@ public final class AutoScoreboardSystem extends RefSystem<EntityStore> {
     ) {
         Player playerComponent = (Player) commandBuffer.getComponent(ref, Player.getComponentType());
         if (playerComponent == null) return;
+
         PlayerRef playerRefComponent = (PlayerRef) commandBuffer.getComponent(ref, PlayerRef.getComponentType());
         if (playerRefComponent == null) return;
 
@@ -59,17 +60,18 @@ public final class AutoScoreboardSystem extends RefSystem<EntityStore> {
         if (hudManager == null) return;
         if (hudManager.getCustomHud() instanceof ScoreboardHud) return;
 
-        // Attach after a short delay on the world's thread to avoid asset-race client crashes
+        // We schedule a short delay, then execute on the world thread (safe attach)
         EntityStore external = (EntityStore) store.getExternalData();
         World world = external.getWorld();
         HytaleServer.SCHEDULED_EXECUTOR.schedule(() -> {
             world.execute(() -> {
                 try {
                     if (!ref.isValid()) return;
-                    // Re-check components on world thread
+
                     Player p = (Player) store.getComponent(ref, Player.getComponentType());
                     PlayerRef pref = (PlayerRef) store.getComponent(ref, PlayerRef.getComponentType());
                     if (p == null || pref == null) return;
+
                     HudManager hm = p.getHudManager();
                     if (hm == null) return;
                     if (hm.getCustomHud() instanceof ScoreboardHud) return;
@@ -85,12 +87,12 @@ public final class AutoScoreboardSystem extends RefSystem<EntityStore> {
                     hm.setCustomHud(pref, hud);
                     hud.show();
 
-                    // Periodic refresh task (example: every 5s)
+                    // schedule refresh task
                     ScheduledFuture<?> future = HytaleServer.SCHEDULED_EXECUTOR.scheduleAtFixedRate(() -> {
                         world.execute(() -> {
                             try {
                                 if (!ref.isValid()) return;
-                                // Update placeholder values here, replace with real lookups later
+                                // TODO: replace with real data lookups
                                 hud.setGold("Gold: 0");
                                 hud.setRank("Rank: Member");
                                 hud.setPlaytime("Playtime: 0m");
@@ -105,7 +107,7 @@ public final class AutoScoreboardSystem extends RefSystem<EntityStore> {
                     updaters.put(ref, future);
 
                 } catch (Throwable t) {
-                    LOGGER.atWarning().withCause(t).log("AutoScoreboardSystem attach failed");
+                    LOGGER.atWarning().withCause(t).log("AutoScoreboard attach failed");
                 }
             });
         }, 350L, TimeUnit.MILLISECONDS);
@@ -122,16 +124,16 @@ public final class AutoScoreboardSystem extends RefSystem<EntityStore> {
         if (fut != null) fut.cancel(false);
 
         try {
-            Player player = (Player) store.getComponent(ref, Player.getComponentType());
+            Player p = (Player) store.getComponent(ref, Player.getComponentType());
             PlayerRef pref = (PlayerRef) store.getComponent(ref, PlayerRef.getComponentType());
-            if (player != null && pref != null) {
-                HudManager hm = player.getHudManager();
+            if (p != null && pref != null) {
+                HudManager hm = p.getHudManager();
                 if (hm != null && hm.getCustomHud() instanceof ScoreboardHud) {
                     hm.setCustomHud(pref, null);
                 }
             }
         } catch (Throwable t) {
-            LOGGER.atWarning().withCause(t).log("AutoScoreboardSystem cleanup failed");
+            LOGGER.atWarning().withCause(t).log("AutoScoreboard cleanup failed");
         }
     }
 }

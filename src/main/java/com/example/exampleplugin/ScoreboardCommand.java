@@ -15,11 +15,11 @@ import com.hypixel.hytale.component.Ref;
 import javax.annotation.Nonnull;
 
 /**
- * /scoreboard - toggle scoreboard HUD
+ * /scoreboard - toggles the scoreboard HUD on/off
  */
 public class ScoreboardCommand extends AbstractPlayerCommand {
     public ScoreboardCommand() {
-        super("scoreboard", "Toggle the server scoreboard HUD.");
+        super("scoreboard", "Toggle the scoreboard HUD.");
         this.setPermissionGroup(GameMode.Adventure);
     }
 
@@ -44,18 +44,16 @@ public class ScoreboardCommand extends AbstractPlayerCommand {
         }
 
         if (hudManager.getCustomHud() instanceof ScoreboardHud) {
-            // hide
             hudManager.setCustomHud(playerRef, null);
             context.sendMessage(Message.raw("Scoreboard hidden."));
             return;
         }
 
-        // show
         ScoreboardHud hud = new ScoreboardHud(playerRef);
         hud.setServerName("ExampleSMP");
-        hud.setGold("Gold: " + getMoney(player));
+        hud.setGold("Gold: 0");
         hud.setRank("Rank: Member");
-        hud.setPlaytime("Playtime: " + getPlaytime(player));
+        hud.setPlaytime("Playtime: 0m");
         hud.setCoords("Coords: 0, 0, 0");
         hud.setFooter("www.example.server");
 
@@ -63,7 +61,4 @@ public class ScoreboardCommand extends AbstractPlayerCommand {
         hud.show();
         context.sendMessage(Message.raw("Scoreboard shown."));
     }
-
-    private String getMoney(Player p) { return "0"; }
-    private String getPlaytime(Player p) { return "0m"; }
 }

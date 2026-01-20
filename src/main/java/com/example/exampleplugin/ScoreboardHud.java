@@ -8,20 +8,19 @@ import com.hypixel.hytale.server.core.universe.PlayerRef;
 import javax.annotation.Nonnull;
 
 /**
- * ScoreboardHud (asset-driven).
+ * ScoreboardHud — asset-driven HUD that appends Pages/Scoreboard.ui and exposes simple setters.
  *
- * - Appends Pages/Scoreboard.ui and exposes setters + refresh() for updating fields.
- * - Use these setters from systems/commands: setServerName, setGold, setRank, setPlaytime, setCoords, setFooter.
+ * Use setServerName / setGold / setRank / setPlaytime / setCoords / setFooter then call refresh() to update.
  */
 public class ScoreboardHud extends CustomUIHud {
     private static final HytaleLogger LOGGER = HytaleLogger.forEnclosingClass();
 
-    private String serverName = "SERVER NAME";
+    private String serverName = "DarkVale";
     private String gold = "Gold: 0";
     private String rank = "Rank: Member";
     private String playtime = "Playtime: 0m";
     private String coords = "Coords: 0, 0, 0";
-    private String footer = "www.example.server";
+    private String footer = "www.darkvale.play";
 
     public ScoreboardHud(@Nonnull PlayerRef playerRef) {
         super(playerRef);
@@ -29,10 +28,10 @@ public class ScoreboardHud extends CustomUIHud {
 
     @Override
     protected void build(@Nonnull UICommandBuilder commandBuilder) {
-        // Append the prepared UI asset (must be at resources/Common/UI/Custom/Pages/Scoreboard.ui)
+        // Append the UI asset (must be at resources/Common/UI/Custom/Pages/Scoreboard.ui)
         commandBuilder.append("Pages/Scoreboard.ui");
 
-        // Set initial values (selectors must match IDs inside the .ui)
+        // Set initial values (selectors must match the IDs declared in the .ui)
         commandBuilder.set("#ScoreboardRoot #ServerName.Text", serverName);
         commandBuilder.set("#ScoreboardRoot #Gold.Text", gold);
         commandBuilder.set("#ScoreboardRoot #Rank.Text", rank);
@@ -41,7 +40,7 @@ public class ScoreboardHud extends CustomUIHud {
         commandBuilder.set("#ScoreboardRoot #Footer.Text", footer);
     }
 
-    // New API setters — use these everywhere in your code
+    // API setters
     public void setServerName(String s) { this.serverName = s; }
     public void setGold(String s) { this.gold = s; }
     public void setRank(String s) { this.rank = s; }
@@ -50,7 +49,7 @@ public class ScoreboardHud extends CustomUIHud {
     public void setFooter(String s) { this.footer = s; }
 
     /**
-     * Incremental update of label texts. Call after modifying fields above.
+     * Incremental update of the text fields. Call after modifying fields above.
      */
     public void refresh() {
         UICommandBuilder b = new UICommandBuilder();
@@ -61,10 +60,11 @@ public class ScoreboardHud extends CustomUIHud {
         b.set("#ScoreboardRoot #Coords.Text", coords);
         b.set("#ScoreboardRoot #Footer.Text", footer);
 
+        // incremental update
         update(false, b);
     }
 
     public void debugLog() {
-        LOGGER.atInfo().log("ScoreboardHud: %s / %s / %s / %s / %s", serverName, gold, rank, playtime, coords);
+        LOGGER.atInfo().log("ScoreboardHud: server=%s, %s, %s, %s, %s", serverName, gold, rank, playtime, coords);
     }
 }
