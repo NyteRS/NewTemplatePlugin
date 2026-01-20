@@ -1,0 +1,60 @@
+Group {
+    Anchor: (Right: 10, Top: 10, Width: 220, Height: 175);
+    Background: #000000(0.7);
+    LayoutMode: Top;
+    Padding: (Horizontal: 10, Vertical: 8);
+
+    Label #TitleLabel {
+        Text: "Debug Info";
+        Anchor: (Height: 22);
+        Style: (FontSize: 16, TextColor: #00ccff, RenderBold: true);
+    }
+
+    Label #PosXLabel {
+        Text: "X: 0";
+        Anchor: (Height: 17);
+        Style: (FontSize: 13, TextColor: #ffffff);
+    }
+
+    Label #PosYLabel {
+        Text: "Y: 0";
+        Anchor: (Height: 17);
+        Style: (FontSize: 13, TextColor: #ffffff);
+    }
+
+    Label #PosZLabel {
+        Text: "Z: 0";
+        Anchor: (Height: 17);
+        Style: (FontSize: 13, TextColor: #ffffff);
+    }
+
+    Label #ChunkLabel {
+        Text: "Chunk: 0, 0";
+        Anchor: (Height: 17);
+        Style: (FontSize: 13, TextColor: #aaaaaa);
+    }
+
+    Label #BiomeLabel {
+        Text: "Biome: Unknown";
+        Anchor: (Height: 17);
+        Style: (FontSize: 13, TextColor: #88cc88);
+    }
+
+    Label #HealthLabel {
+        Text: "Health: 100/100";
+        Anchor: (Height: 17);
+        Style: (FontSize: 13, TextColor: #ff6666);
+    }
+
+    Label #StaminaLabel {
+        Text: "Stamina: 100/100";
+        Anchor: (Height: 17);
+        Style: (FontSize: 13, TextColor: #66ff66);
+    }
+
+    Label #ManaLabel {
+        Text: "Mana: 100/100";
+        Anchor: (Height: 17);
+        Style: (FontSize: 13, TextColor: #6699ff);
+    }
+}

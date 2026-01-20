@@ -1,10 +1,6 @@
 package com.example.exampleplugin.simpledebuginfohud.hud;
 
-import com.hypixel.hytale.component.ArchetypeChunk;
-import com.hypixel.hytale.component.CommandBuffer;
-import com.hypixel.hytale.component.Holder;
-import com.hypixel.hytale.component.Ref;
-import com.hypixel.hytale.component.Store;
+import com.hypixel.hytale.component.*;
 import com.hypixel.hytale.component.query.Query;
 import com.hypixel.hytale.component.system.tick.EntityTickingSystem;
 import com.hypixel.hytale.math.util.MathUtil;
@@ -29,7 +25,15 @@ public class DebugHudSystem extends EntityTickingSystem<EntityStore> {
 
     public DebugHudSystem(DebugManager debugManager) {
         this.debugManager = debugManager;
-        this.query = Query.and(new Query[]{Player.getComponentType()});
+        ComponentType<EntityStore, PlayerRef> playerRefType = PlayerRef.getComponentType();
+        ComponentType<EntityStore, Player> playerType = Player.getComponentType();
+        if (playerRefType == null || playerType == null) {
+            this.query = Query.any();
+        } else {
+            @SuppressWarnings("unchecked")
+            Query<EntityStore> q = (Query<EntityStore>) Query.and(new Query[] { (Query) playerRefType, (Query) playerType });
+            this.query = q;
+        }
     }
 
     public Query<EntityStore> getQuery() {
