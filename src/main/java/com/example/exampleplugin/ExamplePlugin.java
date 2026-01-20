@@ -17,7 +17,7 @@ import javax.annotation.Nonnull;
 import java.util.concurrent.TimeUnit;
 
 /**
- * Main plugin entry. Registers AutoScoreboardSystem and attaches scoreboard on PlayerReady.
+ * Main plugin entry. Registers systems (including BleedSystems) and attaches scoreboard on PlayerReady.
  */
 public class ExamplePlugin extends JavaPlugin {
     private static final HytaleLogger LOGGER = HytaleLogger.forEnclosingClass();
@@ -29,15 +29,26 @@ public class ExamplePlugin extends JavaPlugin {
 
     @Override
     protected void setup() {
+        // Component registry proxy - register event-driven systems here
         ComponentRegistryProxy<EntityStore> registry = getEntityStoreRegistry();
+
+        // Example existing registration
         registry.registerSystem(new LifestealSystems.LifestealOnDamage());
 
+        // Register bleed damage event handler so dagger hits add bleed stacks
+        registry.registerSystem(new BleedSystems.BleedOnDamage());
+
+        // Commands
         this.getCommandRegistry().registerCommand(new DungeonUICommand());
         this.getCommandRegistry().registerCommand(new ScoreboardCommand());
         this.getCommandRegistry().registerCommand(new ExampleCommand(this.getName(), this.getManifest().getVersion().toString()));
 
-        // Register AutoScoreboardSystem so players get the scoreboard automatically
+        // Register persistent / ticking systems on the entity-store registry (per-world)
+        // AutoScoreboardSystem handles HUD updates
         this.getEntityStoreRegistry().registerSystem(new AutoScoreboardSystem());
+
+        // Register the bleed ticking system so periodic bleed damage is applied
+        this.getEntityStoreRegistry().registerSystem(new BleedSystems.BleedTicking());
     }
 
     @Override
@@ -70,12 +81,11 @@ public class ExamplePlugin extends JavaPlugin {
                     // Attach a scoreboard hud on join (this will not override if one exists)
                     if (!(hm.getCustomHud() instanceof ScoreboardHud)) {
                         ScoreboardHud hud = new ScoreboardHud(pref);
-                        hud.setServerName("MyServer");
+                        // ScoreboardHud defaults already set to Darkvale/www.darkvale.com
                         hud.setGold("Gold: 0");
                         hud.setRank("Rank: Member");
                         hud.setPlaytime("Playtime: 0m");
                         hud.setCoords("Coords: 0, 0, 0");
-                        hud.setFooter("www.example.server");
 
                         hm.setCustomHud(pref, hud);
                         hud.show();
