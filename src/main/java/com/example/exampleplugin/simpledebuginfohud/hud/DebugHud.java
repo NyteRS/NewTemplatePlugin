@@ -5,8 +5,8 @@ import com.hypixel.hytale.server.core.entity.entities.player.hud.CustomUIHud;
 import com.hypixel.hytale.server.core.ui.builder.UICommandBuilder;
 import com.hypixel.hytale.server.core.universe.PlayerRef;
 import com.hypixel.hytale.server.core.universe.world.storage.EntityStore;
-import me.davidhenk.simpledebuginfohud.data.DebugManager;
-import me.davidhenk.simpledebuginfohud.data.PlayerDebugSettings;
+import com.example.exampleplugin.simpledebuginfohud.data.DebugManager;
+import com.example.exampleplugin.simpledebuginfohud.data.PlayerDebugSettings;
 
 public class DebugHud extends CustomUIHud {
     private final DebugManager debugManager;

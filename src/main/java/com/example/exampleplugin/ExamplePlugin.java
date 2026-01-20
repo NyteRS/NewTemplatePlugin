@@ -12,9 +12,9 @@ import com.hypixel.hytale.server.core.universe.world.storage.EntityStore;
 import com.hypixel.hytale.server.core.universe.PlayerRef;
 import com.hypixel.hytale.server.core.entity.entities.Player;
 import com.hypixel.hytale.server.core.HytaleServer;
-import me.davidhenk.simpledebuginfohud.command.DebugCommand;
-import me.davidhenk.simpledebuginfohud.data.DebugManager;
-import me.davidhenk.simpledebuginfohud.hud.DebugHudSystem;
+import com.example.exampleplugin.simpledebuginfohud.command.DebugCommand;
+import com.example.exampleplugin.simpledebuginfohud.data.DebugManager;
+import com.example.exampleplugin.simpledebuginfohud.hud.DebugHudSystem;
 
 import javax.annotation.Nonnull;
 import java.util.concurrent.TimeUnit;
@@ -53,7 +53,7 @@ public class ExamplePlugin extends JavaPlugin {
 
         // Register persistent / ticking systems on the entity-store registry (per-world)
         // AutoScoreboardSystem handles HUD updates
-        this.getEntityStoreRegistry().registerSystem(new AutoScoreboardSystem());
+        //this.getEntityStoreRegistry().registerSystem(new AutoScoreboardSystem());
 
         // Register the bleed ticking system so periodic bleed damage is applied
         this.getEntityStoreRegistry().registerSystem(new BleedSystems.BleedTicking());

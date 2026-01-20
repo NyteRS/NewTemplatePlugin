@@ -20,7 +20,7 @@ import com.hypixel.hytale.server.core.universe.world.WorldMapTracker;
 import com.hypixel.hytale.server.core.universe.world.storage.EntityStore;
 import java.util.HashMap;
 import java.util.Map;
-import me.davidhenk.simpledebuginfohud.data.DebugManager;
+import com.example.exampleplugin.simpledebuginfohud.data.DebugManager;
 
 public class DebugHudSystem extends EntityTickingSystem<EntityStore> {
     private final DebugManager debugManager;
