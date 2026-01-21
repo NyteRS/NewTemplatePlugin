@@ -1,4 +1,4 @@
-package com.example.exampleplugin.simpledebuginfohud.data;
+package com.example.exampleplugin.darkvalehud.data;
 
 public class PlayerDebugSettings {
     private boolean debugEnabled = false;

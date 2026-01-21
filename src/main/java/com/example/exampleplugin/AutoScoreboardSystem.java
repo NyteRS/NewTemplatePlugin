@@ -30,7 +30,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 
 /**
- * AutoScoreboardSystem reimplemented in the ticking style used by your working DebugHudSystem.
+ * AutoScoreboardSystem reimplemented in the ticking style used by your working DarkvaleHudSystem.
  *
  * - Maintains a per-PlayerRef ScoreboardHud and updates it from live components each tick.
  * - Recreates and re-attaches HUDs when PlayerRef changes (so HUDs are always bound to the current instance/world).
@@ -68,7 +68,7 @@ public final class AutoScoreboardSystem extends EntityTickingSystem<EntityStore>
             LOGGER.atWarning().withCause(t).log("Failed to load playtime store");
         }
 
-        // safe query construction like DebugHudSystem — avoid null Query
+        // safe query construction like DarkvaleHudSystem — avoid null Query
         ComponentType<EntityStore, PlayerRef> playerRefType = PlayerRef.getComponentType();
         ComponentType<EntityStore, Player> playerType = Player.getComponentType();
         if (playerRefType == null || playerType == null) {

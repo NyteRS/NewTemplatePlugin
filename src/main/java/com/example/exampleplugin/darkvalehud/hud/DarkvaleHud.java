@@ -1,27 +1,27 @@
-package com.example.exampleplugin.simpledebuginfohud.hud;
+package com.example.exampleplugin.darkvalehud.hud;
 
 import com.hypixel.hytale.component.Ref;
 import com.hypixel.hytale.server.core.entity.entities.player.hud.CustomUIHud;
 import com.hypixel.hytale.server.core.ui.builder.UICommandBuilder;
 import com.hypixel.hytale.server.core.universe.PlayerRef;
 import com.hypixel.hytale.server.core.universe.world.storage.EntityStore;
-import com.example.exampleplugin.simpledebuginfohud.data.DebugManager;
-import com.example.exampleplugin.simpledebuginfohud.data.PlayerDebugSettings;
+import com.example.exampleplugin.darkvalehud.data.DebugManager;
+import com.example.exampleplugin.darkvalehud.data.PlayerDebugSettings;
 
 import javax.annotation.Nonnull;
 
 /**
- * DebugHud — adapted to show scoreboard content using the existing DebugHud.ui label IDs.
+ * DarkvaleHud — adapted to show scoreboard content using the existing DarkvaleHud.ui label IDs.
  *
  * Keeps the original setPosition API (posX/posY/posZ) so the tick system can continue to call it.
- * build() writes to the original DebugHud UI labels (TitleLabel, PosXLabel, PosYLabel, PosZLabel,
+ * build() writes to the original DarkvaleHud UI labels (TitleLabel, PosXLabel, PosYLabel, PosZLabel,
  * ChunkLabel, BiomeLabel, HealthLabel, StaminaLabel, ManaLabel).
  */
-public class DebugHud extends CustomUIHud {
+public class DarkvaleHud extends CustomUIHud {
     private final DebugManager debugManager;
     private final Ref<EntityStore> playerEntityRef;
 
-    // Position fields (original DebugHud pattern)
+    // Position fields (original DarkvaleHud pattern)
     private int posX = 0;
     private int posY = 0;
     private int posZ = 0;
@@ -37,7 +37,7 @@ public class DebugHud extends CustomUIHud {
     private volatile String playtimeText = "Playtime: 0m";
     private volatile String footer = "www.darkvale.com";
 
-    public DebugHud(PlayerRef playerRef, DebugManager debugManager, Ref<EntityStore> playerEntityRef) {
+    public DarkvaleHud(PlayerRef playerRef, DebugManager debugManager, Ref<EntityStore> playerEntityRef) {
         super(playerRef);
         this.debugManager = debugManager;
         this.playerEntityRef = playerEntityRef;
@@ -71,8 +71,8 @@ public class DebugHud extends CustomUIHud {
     protected void build(UICommandBuilder builder) {
         PlayerDebugSettings settings = this.debugManager.getSettings(this.playerEntityRef);
 
-        // Append the original UI asset that we will adjust below
-        builder.append("Hud/SimpleDebugInfoHud/DebugHud.ui");
+        // Append the DarkvaleHud UI asset
+        builder.append("Hud/SimpleDebugInfoHud/DarkvaleHud.ui");
 
         if (!settings.isDebugEnabled()) {
             // When disabled, clear header and do not show contents
