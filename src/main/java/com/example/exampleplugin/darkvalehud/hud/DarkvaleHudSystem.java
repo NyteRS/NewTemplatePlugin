@@ -1,4 +1,4 @@
-package com.example.exampleplugin.simpledebuginfohud.hud;
+package com.example.exampleplugin.darkvalehud.hud;
 
 import com.hypixel.hytale.component.*;
 import com.hypixel.hytale.component.query.Query;
@@ -11,7 +11,7 @@ import com.hypixel.hytale.server.core.modules.entity.component.TransformComponen
 import com.hypixel.hytale.server.core.universe.PlayerRef;
 import com.hypixel.hytale.server.core.universe.world.WorldMapTracker;
 import com.hypixel.hytale.server.core.universe.world.storage.EntityStore;
-import com.example.exampleplugin.simpledebuginfohud.data.DebugManager;
+import com.example.exampleplugin.darkvalehud.data.DebugManager;
 import com.example.exampleplugin.PlaytimeStore;
 import com.hypixel.hytale.server.core.entity.UUIDComponent;
 
@@ -23,17 +23,17 @@ import java.util.UUID;
 import java.lang.reflect.Method;
 
 /**
- * Combined DebugHudSystem:
+ * Combined DarkvaleHudSystem:
  * - setPosition(...) + hud.show() each tick (preserves coords behavior)
  * - persists playtime across transfers and disconnects
  * - copies debug-enabled flag across transfers so toggle persists
  */
-public class DebugHudSystem extends EntityTickingSystem<EntityStore> {
+public class DarkvaleHudSystem extends EntityTickingSystem<EntityStore> {
     private final DebugManager debugManager;
     private final Query<EntityStore> query;
 
     // Per-PlayerRef tracked state
-    private final Map<PlayerRef, DebugHud> huds = new HashMap<>();
+    private final Map<PlayerRef, DarkvaleHud> huds = new HashMap<>();
     private final Map<PlayerRef, Ref<EntityStore>> attachedRefByPlayerRef = new ConcurrentHashMap<>();
     private final Map<PlayerRef, UUID> refToUuid = new ConcurrentHashMap<>();
 
@@ -52,7 +52,7 @@ public class DebugHudSystem extends EntityTickingSystem<EntityStore> {
         PERMISSION_RANK_MAP.put("group.member", "Member");
     }
 
-    public DebugHudSystem(DebugManager debugManager) {
+    public DarkvaleHudSystem(DebugManager debugManager) {
         this.debugManager = debugManager;
         ComponentType<EntityStore, PlayerRef> playerRefType = PlayerRef.getComponentType();
         ComponentType<EntityStore, Player> playerType = Player.getComponentType();
@@ -87,7 +87,7 @@ public class DebugHudSystem extends EntityTickingSystem<EntityStore> {
             // Removal/invalid-ref cleanup: persist playtime for mapped UUID and remove hud
             try {
                 if (player.wasRemoved() || ref == null || !ref.isValid()) {
-                    DebugHud existingHud = huds.remove(playerRef);
+                    DarkvaleHud existingHud = huds.remove(playerRef);
                     if (existingHud != null) {
                         try {
                             // persist playtime for mapped UUID if present
@@ -101,7 +101,7 @@ public class DebugHudSystem extends EntityTickingSystem<EntityStore> {
                             // detach hud if still attached to player (best-effort)
                             try {
                                 Player p = (Player) store.getComponent(ref, Player.getComponentType());
-                                if (p != null && p.getHudManager() != null && p.getHudManager().getCustomHud() instanceof DebugHud) {
+                                if (p != null && p.getHudManager() != null && p.getHudManager().getCustomHud() instanceof DarkvaleHud) {
                                     p.getHudManager().setCustomHud(playerRef, null);
                                 }
                             } catch (Throwable ignored) {}
@@ -159,9 +159,9 @@ public class DebugHudSystem extends EntityTickingSystem<EntityStore> {
             }
 
             // Ensure HUD exists and is attached to the current PlayerRef
-            DebugHud hud = huds.get(playerRef);
+            DarkvaleHud hud = huds.get(playerRef);
             if (hud == null) {
-                hud = new DebugHud(playerRef, this.debugManager, ref);
+                hud = new DarkvaleHud(playerRef, this.debugManager, ref);
                 huds.put(playerRef, hud);
                 try { player.getHudManager().setCustomHud(playerRef, hud); } catch (Throwable ignored) {}
                 if (ref != null) joinTimestamps.put(ref, joinTimestamps.getOrDefault(ref, System.currentTimeMillis()));

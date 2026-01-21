@@ -10,9 +10,9 @@ import com.hypixel.hytale.server.core.universe.PlayerRef;
 import com.hypixel.hytale.server.core.entity.entities.Player;
 import com.hypixel.hytale.server.core.HytaleServer;
 
-import com.example.exampleplugin.simpledebuginfohud.command.DebugCommand;
-import com.example.exampleplugin.simpledebuginfohud.data.DebugManager;
-import com.example.exampleplugin.simpledebuginfohud.hud.DebugHudSystem;
+import com.example.exampleplugin.darkvalehud.command.DebugCommand;
+import com.example.exampleplugin.darkvalehud.data.DebugManager;
+import com.example.exampleplugin.darkvalehud.hud.DarkvaleHudSystem;
 
 import com.hypixel.hytale.component.Ref;
 import com.hypixel.hytale.component.Store;
@@ -38,7 +38,7 @@ public class ExamplePlugin extends JavaPlugin {
     protected void setup() {
         // Register systems/managers
         this.debugManager = new DebugManager();
-        this.getEntityStoreRegistry().registerSystem(new DebugHudSystem(this.debugManager));
+        this.getEntityStoreRegistry().registerSystem(new DarkvaleHudSystem(this.debugManager));
 
         // Commands (existing)
         this.getCommandRegistry().registerCommand(new DebugCommand(this, this.debugManager));
@@ -85,7 +85,7 @@ public class ExamplePlugin extends JavaPlugin {
                 if (player == null) return;
                 if (player.getHudManager() == null) return;
 
-                // Enable the debug HUD for this player's entity Ref. DebugHudSystem reads this flag and
+                // Enable the debug HUD for this player's entity Ref. DarkvaleHudSystem reads this flag and
                 // will attach/show the HUD in its ticking logic.
                 this.debugManager.setDebugEnabled(ref, true);
             } catch (Throwable ignored) {

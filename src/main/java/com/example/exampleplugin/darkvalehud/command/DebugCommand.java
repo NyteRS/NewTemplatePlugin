@@ -1,4 +1,4 @@
-package com.example.exampleplugin.simpledebuginfohud.command;
+package com.example.exampleplugin.darkvalehud.command;
 
 import com.example.exampleplugin.ExamplePlugin;
 import com.hypixel.hytale.component.Ref;
@@ -10,7 +10,7 @@ import com.hypixel.hytale.server.core.command.system.basecommands.AbstractPlayer
 import com.hypixel.hytale.server.core.universe.PlayerRef;
 import com.hypixel.hytale.server.core.universe.world.World;
 import com.hypixel.hytale.server.core.universe.world.storage.EntityStore;
-import com.example.exampleplugin.simpledebuginfohud.data.DebugManager;
+import com.example.exampleplugin.darkvalehud.data.DebugManager;
 
 public class DebugCommand extends AbstractPlayerCommand {
     private final ExamplePlugin plugin;

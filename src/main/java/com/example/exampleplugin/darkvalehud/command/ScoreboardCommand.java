@@ -1,7 +1,7 @@
-package com.example.exampleplugin.simpledebuginfohud.command;
+package com.example.exampleplugin.darkvalehud.command;
 
 import com.example.exampleplugin.ExamplePlugin;
-import com.example.exampleplugin.simpledebuginfohud.data.ScoreboardManager;
+import com.example.exampleplugin.darkvalehud.data.ScoreboardManager;
 import com.hypixel.hytale.component.Ref;
 import com.hypixel.hytale.component.Store;
 import com.hypixel.hytale.server.core.Message;

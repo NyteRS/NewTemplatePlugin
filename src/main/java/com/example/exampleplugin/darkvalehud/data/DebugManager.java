@@ -1,4 +1,4 @@
-package com.example.exampleplugin.simpledebuginfohud.data;
+package com.example.exampleplugin.darkvalehud.data;
 
 import com.hypixel.hytale.component.Ref;
 import com.hypixel.hytale.server.core.universe.world.storage.EntityStore;
