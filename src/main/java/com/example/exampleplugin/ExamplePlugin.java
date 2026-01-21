@@ -1,7 +1,5 @@
 package com.example.exampleplugin;
 
-import com.example.exampleplugin.simpledebuginfohud.system.EnableHudOnPlayerAddSystem;
-import com.hypixel.hytale.component.ComponentRegistryProxy;
 import com.hypixel.hytale.logger.HytaleLogger;
 import com.hypixel.hytale.server.core.event.events.player.PlayerReadyEvent;
 import com.hypixel.hytale.server.core.plugin.JavaPlugin;
@@ -13,28 +11,23 @@ import com.hypixel.hytale.server.core.entity.entities.Player;
 import com.hypixel.hytale.server.core.HytaleServer;
 
 import com.example.exampleplugin.simpledebuginfohud.command.DebugCommand;
-import com.example.exampleplugin.simpledebuginfohud.command.ScoreboardCommand;
 import com.example.exampleplugin.simpledebuginfohud.data.DebugManager;
-import com.example.exampleplugin.simpledebuginfohud.data.ScoreboardManager;
 import com.example.exampleplugin.simpledebuginfohud.hud.DebugHudSystem;
-
 
 import com.hypixel.hytale.component.Ref;
 import com.hypixel.hytale.component.Store;
 
 import javax.annotation.Nonnull;
-import java.util.concurrent.TimeUnit;
 import java.util.logging.Level;
 
 /**
- * Main plugin entry. Registers systems and ensures the Debug/Scoreboard HUD is auto-enabled once the
- * player's client and world-thread state are ready.
+ * Main plugin entry. Registers systems and enables the Debug HUD when the player is ready
+ * by listening to PlayerReadyEvent (the engine event fired when client is ready).
  */
 public class ExamplePlugin extends JavaPlugin {
     private static final HytaleLogger LOGGER = HytaleLogger.forEnclosingClass();
 
     private DebugManager debugManager;
-    private ScoreboardManager scoreboardManager;
 
     public ExamplePlugin(JavaPluginInit init) {
         super(init);
@@ -43,125 +36,61 @@ public class ExamplePlugin extends JavaPlugin {
 
     @Override
     protected void setup() {
-        // Component registry proxy - register event-driven systems here
-        ComponentRegistryProxy<EntityStore> registry = getEntityStoreRegistry();
-
-        // Example existing registration
-        registry.registerSystem(new LifestealSystems.LifestealOnDamage());
-
-        // Managers
+        // Register systems/managers
         this.debugManager = new DebugManager();
-        this.scoreboardManager = new ScoreboardManager();
+        this.getEntityStoreRegistry().registerSystem(new DebugHudSystem(this.debugManager));
 
-        // Systems
-        this.getEntityStoreRegistry().registerSystem(new EnableHudOnPlayerAddSystem(this.debugManager));
-
-        // Commands
+        // Commands (existing)
         this.getCommandRegistry().registerCommand(new DebugCommand(this, this.debugManager));
-        this.getCommandRegistry().registerCommand(new TestRankCommand());
-        this.getCommandRegistry().registerCommand(new DungeonUICommand());
-        // Use the ScoreboardCommand that expects (ExamplePlugin, ScoreboardManager)
-        this.getCommandRegistry().registerCommand(new ScoreboardCommand(this, this.scoreboardManager));
 
         this.getLogger().at(Level.INFO).log("Simple Debug Info HUD Plugin loaded successfully!");
-        this.getLogger().at(Level.INFO).log("Use /debug to toggle the debug HUD.");
-
-        // Register bleed damage event handler so dagger hits add bleed stacks
-        registry.registerSystem(new BleedSystems.BleedOnDamage());
-
-        // Register the bleed ticking system so periodic bleed damage is applied
-        this.getEntityStoreRegistry().registerSystem(new BleedSystems.BleedTicking());
     }
 
     @Override
     protected void start() {
         super.start();
+
+        // Register player-ready listener. This uses the server event registry and will be invoked
+        // when the engine dispatches PlayerReadyEvent for a player (client finished loading).
         getEventRegistry().registerGlobal(PlayerReadyEvent.class, this::onPlayerReady);
     }
 
     /**
-     * PlayerReady handler: schedule a safe attempt to enable the HUD for the player's entity ref once the
-     * client/world-thread state is ready. This avoids enabling too early (which caused disconnects).
+     * Fired when a player becomes "ready" on the server (client finished setup).
+     * We enable the debug HUD here for the player's entity reference.
      */
     private void onPlayerReady(@Nonnull PlayerReadyEvent event) {
-        Ref<EntityStore> ref = event.getPlayer().getReference();
+        // The event provides a Ref<EntityStore> and Player instance.
+        Ref<EntityStore> ref = event.getPlayer().getReference(); // or event.getPlayer().getReference()
         if (ref == null) return;
         Store<EntityStore> store = ref.getStore();
         if (store == null) return;
-        World world = ((EntityStore) store.getExternalData()).getWorld();
-        if (world == null) return;
 
-        // Kick off the polling enable sequence with attempt 0
-        scheduleEnableHud(ref, store, world, 0);
-    }
-
-    /**
-     * Polling helper: attempts to enable the HUD for the given ref when the world-thread player and packet handler exist.
-     *
-     * - Attempts up to MAX_ATTEMPTS times, spaced by DELAY_MS.
-     * - Uses HytaleServer.SCHEDULED_EXECUTOR to schedule a runnable that executes on the world thread via world.execute(...)
-     * - This ensures we don't enable the HUD too early (client loading) which previously caused disconnects.
-     */
-    private void scheduleEnableHud(Ref<EntityStore> ref, Store<EntityStore> store, World world, int attempt) {
-        final int MAX_ATTEMPTS = 12;        // try for ~12 * DELAY_MS (3s if DELAY_MS=250)
-        final long DELAY_MS = 250L;
-
-        if (attempt > MAX_ATTEMPTS) {
-            // give up silently if attempts exhausted
+        // Extract world (external data of the store is the EntityStore, from which we can get the world)
+        World world;
+        try {
+            world = ((EntityStore) store.getExternalData()).getWorld();
+        } catch (Throwable t) {
             return;
         }
+        if (world == null) return;
 
-        HytaleServer.SCHEDULED_EXECUTOR.schedule(() -> {
-            // Execute on the world thread for safety with component access and HUD operations
-            world.execute(() -> {
-                try {
-                    if (!ref.isValid()) return;
+        // Schedule enabling on the world thread to be safe with other world operations.
+        world.execute(() -> {
+            try {
+                if (!ref.isValid()) return;
 
-                    Player p = null;
-                    try {
-                        p = (Player) store.getComponent(ref, Player.getComponentType());
-                    } catch (Throwable ignored) {}
+                // Optional: sanity-check Player + HudManager presence
+                Player player = (Player) store.getComponent(ref, Player.getComponentType());
+                if (player == null) return;
+                if (player.getHudManager() == null) return;
 
-                    if (p == null) {
-                        // Not yet available on the world thread — schedule another attempt
-                        scheduleEnableHud(ref, store, world, attempt + 1);
-                        return;
-                    }
-
-                    PlayerRef playerRef = null;
-                    try {
-                        playerRef = (PlayerRef) store.getComponent(ref, PlayerRef.getComponentType());
-                    } catch (Throwable ignored) {}
-
-                    // Check for HUD manager and packet handler readiness
-                    boolean hudManagerReady = false;
-                    try {
-                        hudManagerReady = (p.getHudManager() != null);
-                    } catch (Throwable ignored) {}
-
-                    boolean packetHandlerReady = false;
-                    try {
-                        if (playerRef != null && playerRef.getPacketHandler() != null) packetHandlerReady = true;
-                    } catch (Throwable ignored) {}
-
-                    if (!hudManagerReady || !packetHandlerReady) {
-                        // Not ready yet — retry
-                        scheduleEnableHud(ref, store, world, attempt + 1);
-                        return;
-                    }
-
-                    // Safe to enable the HUD on this world-thread
-                    try {
-                        this.debugManager.setDebugEnabled(ref, true);
-                    } catch (Throwable t) {
-                        // If enabling fails, attempt again a few times
-                        scheduleEnableHud(ref, store, world, attempt + 1);
-                    }
-                } catch (Throwable ignored) {
-                    // Swallow and retry until attempts exhausted
-                    scheduleEnableHud(ref, store, world, attempt + 1);
-                }
-            });
-        }, DELAY_MS, TimeUnit.MILLISECONDS);
+                // Enable the debug HUD for this player's entity Ref. DebugHudSystem reads this flag and
+                // will attach/show the HUD in its ticking logic.
+                this.debugManager.setDebugEnabled(ref, true);
+            } catch (Throwable ignored) {
+                // Fail silently — do not crash world init
+            }
+        });
     }
 }

@@ -1,61 +1,86 @@
-Group {
-    // Anchored to middle-right of the screen (adjust the numeric offsets to taste)
-    Anchor: (Right: 10, Middle: 0, Width: 220, Height: 175);
-    Background: #000000(0.7);
-    LayoutMode: Top;
-    Padding: (Horizontal: 10, Vertical: 8);
+Group #DebugHudRoot {
+  // Full-height root anchored to the right edge so flex spacers can vertically center content.
+  Anchor: (Right: 10, Top: 0, Bottom: 0);
+  LayoutMode: Top;
+  Padding: (Full: 0);
 
-    Label #TitleLabel {
+  // Top flexible spacer: pushes the outline down until center
+  Group { FlexWeight: 1; }
+
+  // Outline container anchored to the right of the root; the outline draws the semi-opaque border
+  Group #DebugHudOutline {
+    Anchor: (Right: 0, Width: 220);     // right-aligned within root
+    LayoutMode: Top;
+    Padding: (Full: 2);                 // thickness of border
+    Background: #000000(0.7);           // semi-opaque border (alpha 0.7)
+
+    // Inner transparent content area
+    Group #DebugHudInner {
+      Anchor: (Width: 216);
+      LayoutMode: Top;
+      Padding: (Full: 8);
+      Background: #000000(0.0);         // fully transparent center
+
+      Label #TitleLabel {
         Text: "Darkvale";
         Anchor: (Height: 22);
         Style: (FontSize: 16, TextColor: #00ccff, RenderBold: true);
-    }
+      }
 
-    Label #PosXLabel {
+      Group { Anchor: (Height: 6); }
+
+      Label #PosXLabel {
         Text: "X: 0";
         Anchor: (Height: 17);
         Style: (FontSize: 13, TextColor: #ffffff);
-    }
+      }
 
-    Label #PosYLabel {
+      Label #PosYLabel {
         Text: "Y: 0";
         Anchor: (Height: 17);
         Style: (FontSize: 13, TextColor: #ffffff);
-    }
+      }
 
-    Label #PosZLabel {
+      Label #PosZLabel {
         Text: "Z: 0";
         Anchor: (Height: 17);
         Style: (FontSize: 13, TextColor: #ffffff);
-    }
+      }
 
-    Label #ChunkLabel {
+      Label #ChunkLabel {
         Text: "Chunk: 0, 0";
         Anchor: (Height: 17);
         Style: (FontSize: 13, TextColor: #aaaaaa);
-    }
+      }
 
-    Label #BiomeLabel {
+      Label #BiomeLabel {
         Text: "Biome: Unknown";
         Anchor: (Height: 17);
         Style: (FontSize: 13, TextColor: #88cc88);
-    }
+      }
 
-    Label #HealthLabel {
+      Group { Anchor: (Height: 6); }
+
+      Label #HealthLabel {
         Text: "Rank: Member";
         Anchor: (Height: 17);
         Style: (FontSize: 13, TextColor: #ffffff);
-    }
+      }
 
-    Label #StaminaLabel {
+      Label #StaminaLabel {
         Text: "Playtime: 0m";
         Anchor: (Height: 17);
         Style: (FontSize: 13, TextColor: #ffffff);
-    }
+      }
 
-    Label #ManaLabel {
+      Label #ManaLabel {
         Text: "www.darkvale.com";
         Anchor: (Height: 17);
         Style: (FontSize: 12, TextColor: #cccccc);
+      }
     }
+  }
+
+  // Bottom flexible spacer: pushes the outline up until center
+  Group { FlexWeight: 1; }
 }
