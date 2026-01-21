@@ -17,7 +17,7 @@ public class DebugCommand extends AbstractPlayerCommand {
     private final DebugManager debugManager;
 
     public DebugCommand(ExamplePlugin plugin, DebugManager debugManager) {
-        super("debug", "Toggle the debug HUD");
+        super("debugtest", "Toggle the debug HUD");
         this.plugin = plugin;
         this.debugManager = debugManager;
     }
