@@ -8,21 +8,34 @@ import com.hypixel.hytale.server.core.universe.world.storage.EntityStore;
 import com.example.exampleplugin.simpledebuginfohud.data.DebugManager;
 import com.example.exampleplugin.simpledebuginfohud.data.PlayerDebugSettings;
 
+import javax.annotation.Nonnull;
+
+/**
+ * DebugHud — adapted to show scoreboard content using the existing DebugHud.ui label IDs.
+ *
+ * Keeps the original setPosition API (posX/posY/posZ) so the tick system can continue to call it.
+ * build() writes to the original DebugHud UI labels (TitleLabel, PosXLabel, PosYLabel, PosZLabel,
+ * ChunkLabel, BiomeLabel, HealthLabel, StaminaLabel, ManaLabel).
+ */
 public class DebugHud extends CustomUIHud {
     private final DebugManager debugManager;
     private final Ref<EntityStore> playerEntityRef;
+
+    // Position fields (original DebugHud pattern)
     private int posX = 0;
     private int posY = 0;
     private int posZ = 0;
     private int chunkX = 0;
     private int chunkZ = 0;
+
+    // Biome (original)
     private String biomeName = "Unknown";
-    private float health = 100.0F;
-    private float maxHealth = 100.0F;
-    private float stamina = 100.0F;
-    private float maxStamina = 100.0F;
-    private float mana = 100.0F;
-    private float maxMana = 100.0F;
+
+    // Server / scoreboard fields
+    private volatile String serverName = "Darkvale";
+    private volatile String rankText = "Rank: Member";
+    private volatile String playtimeText = "Playtime: 0m";
+    private volatile String footer = "www.darkvale.com";
 
     public DebugHud(PlayerRef playerRef, DebugManager debugManager, Ref<EntityStore> playerEntityRef) {
         super(playerRef);
@@ -30,6 +43,7 @@ public class DebugHud extends CustomUIHud {
         this.playerEntityRef = playerEntityRef;
     }
 
+    // Preserve original API: update integer position fields
     public void setPosition(int x, int y, int z) {
         this.posX = x;
         this.posY = y;
@@ -42,38 +56,41 @@ public class DebugHud extends CustomUIHud {
         this.biomeName = biomeName != null ? biomeName : "Unknown";
     }
 
-    public void setHealth(float health, float maxHealth) {
-        this.health = health;
-        this.maxHealth = maxHealth;
-    }
-
-    public void setStamina(float stamina, float maxStamina) {
-        this.stamina = stamina;
-        this.maxStamina = maxStamina;
-    }
-
-    public void setMana(float mana, float maxMana) {
-        this.mana = mana;
-        this.maxMana = maxMana;
-    }
+    // Scoreboard setters (mapped into existing labels)
+    public void setServerName(@Nonnull String s) { this.serverName = (s == null) ? "" : s; }
+    public void setRank(@Nonnull String r) { this.rankText = (r == null) ? "" : r; }
+    public void setPlaytime(@Nonnull String p) { this.playtimeText = (p == null) ? "" : p; }
+    public void setFooter(@Nonnull String f) { this.footer = (f == null) ? "" : f; }
 
     public boolean isDebugEnabled() {
         PlayerDebugSettings settings = this.debugManager.getSettings(this.playerEntityRef);
         return settings.isDebugEnabled();
     }
 
+    @Override
     protected void build(UICommandBuilder builder) {
         PlayerDebugSettings settings = this.debugManager.getSettings(this.playerEntityRef);
-        if (settings.isDebugEnabled()) {
-            builder.append("Hud/SimpleDebugInfoHud/DebugHud.ui");
-            builder.set("#PosXLabel.Text", "X: " + this.posX);
-            builder.set("#PosYLabel.Text", "Y: " + this.posY);
-            builder.set("#PosZLabel.Text", "Z: " + this.posZ);
-            builder.set("#ChunkLabel.Text", "Chunk: " + this.chunkX + ", " + this.chunkZ);
-            builder.set("#BiomeLabel.Text", "Biome: " + this.biomeName);
-            builder.set("#HealthLabel.Text", String.format("Health: %.0f/%.0f", this.health, this.maxHealth));
-            builder.set("#StaminaLabel.Text", String.format("Stamina: %.0f/%.0f", this.stamina, this.maxStamina));
-            builder.set("#ManaLabel.Text", String.format("Mana: %.0f/%.0f", this.mana, this.maxMana));
+
+        // Append the original UI asset that we will adjust below
+        builder.append("Hud/SimpleDebugInfoHud/DebugHud.ui");
+
+        if (!settings.isDebugEnabled()) {
+            // When disabled, clear header and do not show contents
+            builder.set("#TitleLabel.Text", "");
+            return;
         }
+
+        // Map values to the UI labels
+        builder.set("#TitleLabel.Text", this.serverName); // header
+        builder.set("#PosXLabel.Text", "X: " + this.posX);
+        builder.set("#PosYLabel.Text", "Y: " + this.posY);
+        builder.set("#PosZLabel.Text", "Z: " + this.posZ);
+        builder.set("#ChunkLabel.Text", "Chunk: " + this.chunkX + ", " + this.chunkZ);
+        builder.set("#BiomeLabel.Text", "Biome: " + this.biomeName);
+
+        // Map scoreboard fields into the lower labels:
+        builder.set("#HealthLabel.Text", this.rankText);      // show Rank here
+        builder.set("#StaminaLabel.Text", this.playtimeText); // show Playtime here
+        builder.set("#ManaLabel.Text", this.footer);          // use ManaLabel as footer location
     }
 }
