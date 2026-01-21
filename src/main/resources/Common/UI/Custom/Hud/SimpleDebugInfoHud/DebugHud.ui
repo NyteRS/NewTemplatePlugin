@@ -1,11 +1,12 @@
 Group {
-    Anchor: (Right: 10, Top: 10, Width: 220, Height: 175);
+    // Anchored to middle-right of the screen (adjust the numeric offsets to taste)
+    Anchor: (Right: 10, Middle: 0, Width: 220, Height: 175);
     Background: #000000(0.7);
     LayoutMode: Top;
     Padding: (Horizontal: 10, Vertical: 8);
 
     Label #TitleLabel {
-        Text: "Debug Info";
+        Text: "Darkvale";
         Anchor: (Height: 22);
         Style: (FontSize: 16, TextColor: #00ccff, RenderBold: true);
     }
@@ -41,20 +42,20 @@ Group {
     }
 
     Label #HealthLabel {
-        Text: "Health: 100/100";
+        Text: "Rank: Member";
         Anchor: (Height: 17);
-        Style: (FontSize: 13, TextColor: #ff6666);
+        Style: (FontSize: 13, TextColor: #ffffff);
     }
 
     Label #StaminaLabel {
-        Text: "Stamina: 100/100";
+        Text: "Playtime: 0m";
         Anchor: (Height: 17);
-        Style: (FontSize: 13, TextColor: #66ff66);
+        Style: (FontSize: 13, TextColor: #ffffff);
     }
 
     Label #ManaLabel {
-        Text: "Mana: 100/100";
+        Text: "www.darkvale.com";
         Anchor: (Height: 17);
-        Style: (FontSize: 13, TextColor: #6699ff);
+        Style: (FontSize: 12, TextColor: #cccccc);
     }
 }
