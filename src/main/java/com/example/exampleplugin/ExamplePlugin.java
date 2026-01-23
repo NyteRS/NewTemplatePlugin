@@ -1,14 +1,16 @@
 package com.example.exampleplugin;
 
+import com.example.exampleplugin.custominstance.CustomInstancesCopyCommand;
+import com.example.exampleplugin.custominstance.CustomInstancesNewCommand;
+import com.example.exampleplugin.custominstance.CustomInstancesSaveCurrentCommand;
+import com.example.exampleplugin.darkvalehud.data.ScoreboardManager;
 import com.hypixel.hytale.logger.HytaleLogger;
 import com.hypixel.hytale.server.core.event.events.player.PlayerReadyEvent;
 import com.hypixel.hytale.server.core.plugin.JavaPlugin;
 import com.hypixel.hytale.server.core.plugin.JavaPluginInit;
 import com.hypixel.hytale.server.core.universe.world.World;
 import com.hypixel.hytale.server.core.universe.world.storage.EntityStore;
-import com.hypixel.hytale.server.core.universe.PlayerRef;
 import com.hypixel.hytale.server.core.entity.entities.Player;
-import com.hypixel.hytale.server.core.HytaleServer;
 
 import com.example.exampleplugin.darkvalehud.command.DebugCommand;
 import com.example.exampleplugin.darkvalehud.data.DebugManager;
@@ -27,7 +29,9 @@ import java.util.logging.Level;
 public class ExamplePlugin extends JavaPlugin {
     private static final HytaleLogger LOGGER = HytaleLogger.forEnclosingClass();
 
-    private DebugManager debugManager;
+    private DebugManager debugManager;    // Dungeon subsystem
+    private DungeonManager dungeonManager;
+    private ScoreboardManager scoreboardManager;
 
     public ExamplePlugin(JavaPluginInit init) {
         super(init);
@@ -36,11 +40,19 @@ public class ExamplePlugin extends JavaPlugin {
 
     @Override
     protected void setup() {
-        // Register systems/managers
         this.debugManager = new DebugManager();
+        this.scoreboardManager = new ScoreboardManager();
+
+// create the dungeon manager first
+        this.dungeonManager = new DungeonManager();
+
+// register systems that depend on managers
         this.getEntityStoreRegistry().registerSystem(new DarkvaleHudSystem(this.debugManager));
 
         // Commands (existing)
+        this.getCommandRegistry().registerCommand(new CustomInstancesNewCommand());
+        this.getCommandRegistry().registerCommand(new CustomInstancesCopyCommand());
+        this.getCommandRegistry().registerCommand(new CustomInstancesSaveCurrentCommand());
         this.getCommandRegistry().registerCommand(new DebugCommand(this, this.debugManager));
 
         this.getLogger().at(Level.INFO).log("Simple Debug Info HUD Plugin loaded successfully!");
