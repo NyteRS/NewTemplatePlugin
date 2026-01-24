@@ -1,8 +1,6 @@
 package com.example.exampleplugin;
 
-import com.example.exampleplugin.custominstance.CustomInstancesCopyCommand;
-import com.example.exampleplugin.custominstance.CustomInstancesNewCommand;
-import com.example.exampleplugin.custominstance.CustomInstancesSaveCurrentCommand;
+import com.example.exampleplugin.custominstance.*;
 import com.example.exampleplugin.darkvalehud.data.ScoreboardManager;
 import com.hypixel.hytale.logger.HytaleLogger;
 import com.hypixel.hytale.server.core.event.events.player.PlayerReadyEvent;
@@ -53,6 +51,8 @@ public class ExamplePlugin extends JavaPlugin {
         this.getCommandRegistry().registerCommand(new CustomInstancesNewCommand());
         this.getCommandRegistry().registerCommand(new CustomInstancesCopyCommand());
         this.getCommandRegistry().registerCommand(new CustomInstancesSaveCurrentCommand());
+        this.getCommandRegistry().registerCommand(new ListInstancesCommand());
+        this.getCommandRegistry().registerCommand(new JoinInstanceCommand());
         this.getCommandRegistry().registerCommand(new DebugCommand(this, this.debugManager));
 
         this.getLogger().at(Level.INFO).log("Simple Debug Info HUD Plugin loaded successfully!");
