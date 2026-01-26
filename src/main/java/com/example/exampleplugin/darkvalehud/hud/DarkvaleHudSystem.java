@@ -98,11 +98,11 @@ public class DarkvaleHudSystem extends EntityTickingSystem<EntityStore> {
                                 playtimeStore.addMillis(mappedUuid, elapsed);
                                 playtimeStore.save();
                             }
-                            // detach hud if still attached to player (best-effort)
+// detach hud if still attached to player (best-effort)
                             try {
                                 Player p = (Player) store.getComponent(ref, Player.getComponentType());
-                                if (p != null && p.getHudManager() != null && p.getHudManager().getCustomHud() instanceof DarkvaleHud) {
-                                    p.getHudManager().setCustomHud(playerRef, null);
+                                if (p != null) {
+                                    com.example.exampleplugin.darkvalehud.hud.DarkvaleHudRegistrar.hideHud(p, playerRef);
                                 }
                             } catch (Throwable ignored) {}
                         } catch (Throwable ignored) {}
@@ -163,7 +163,7 @@ public class DarkvaleHudSystem extends EntityTickingSystem<EntityStore> {
             if (hud == null) {
                 hud = new DarkvaleHud(playerRef, this.debugManager, ref);
                 huds.put(playerRef, hud);
-                try { player.getHudManager().setCustomHud(playerRef, hud); } catch (Throwable ignored) {}
+                try { com.example.exampleplugin.darkvalehud.hud.DarkvaleHudRegistrar.showHud(player, playerRef, hud); } catch (Throwable ignored) {}
                 if (ref != null) joinTimestamps.put(ref, joinTimestamps.getOrDefault(ref, System.currentTimeMillis()));
                 try { hud.show(); } catch (Throwable ignored) {}
             }

@@ -214,16 +214,13 @@ public final class AutoScoreboardSystem extends EntityTickingSystem<EntityStore>
         }
 
         try {
-            // detach HUD if present
+// detach HUD if present (use registrar for MultipleHUD compatibility)
             ScoreboardHud s = huds.remove(playerRef);
             if (s != null && ref != null && ref.isValid() && store != null) {
                 try {
                     Player p = (Player) store.getComponent(ref, Player.getComponentType());
                     if (p != null) {
-                        HudManager hm = p.getHudManager();
-                        if (hm != null && hm.getCustomHud() instanceof ScoreboardHud) {
-                            hm.setCustomHud(playerRef, null);
-                        }
+                        com.example.exampleplugin.darkvalehud.hud.DarkvaleHudRegistrar.hideHud(p, playerRef);
                     }
                 } catch (Throwable ignored) {}
             }

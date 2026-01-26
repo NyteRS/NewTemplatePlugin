@@ -44,7 +44,8 @@ public class ScoreboardCommand extends AbstractPlayerCommand {
         }
 
         if (hudManager.getCustomHud() instanceof ScoreboardHud) {
-            hudManager.setCustomHud(playerRef, null);
+            // use registrar to hide so MultipleHUD will handle it if present
+            com.example.exampleplugin.darkvalehud.hud.DarkvaleHudRegistrar.hideHud(player, playerRef);
             context.sendMessage(Message.raw("Scoreboard hidden."));
             return;
         }
@@ -57,7 +58,8 @@ public class ScoreboardCommand extends AbstractPlayerCommand {
         hud.setCoords("Coords: 0, 0, 0");
         hud.setFooter("www.example.server");
 
-        hudManager.setCustomHud(playerRef, hud);
+        // register via registrar (MultipleHUD aware)
+        com.example.exampleplugin.darkvalehud.hud.DarkvaleHudRegistrar.showHud(player, playerRef, hud);
         hud.show();
         context.sendMessage(Message.raw("Scoreboard shown."));
     }
