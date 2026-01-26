@@ -14,6 +14,8 @@ import com.hypixel.hytale.server.core.universe.world.storage.EntityStore;
 import com.example.exampleplugin.darkvalehud.data.DebugManager;
 import com.example.exampleplugin.PlaytimeStore;
 import com.hypixel.hytale.server.core.entity.UUIDComponent;
+import com.example.exampleplugin.darkvalehud.hud.DarkvaleHudRegistrar; // ensure registrar exists and calls MHUD
+import com.hypixel.hytale.server.core.universe.world.World;
 
 import java.util.HashMap;
 import java.util.LinkedHashMap;
@@ -27,6 +29,8 @@ import java.lang.reflect.Method;
  * - setPosition(...) + hud.show() each tick (preserves coords behavior)
  * - persists playtime across transfers and disconnects
  * - copies debug-enabled flag across transfers so toggle persists
+ *
+ * This file is the full class replacement with MHUD attach/detach via DarkvaleHudRegistrar.
  */
 public class DarkvaleHudSystem extends EntityTickingSystem<EntityStore> {
     private final DebugManager debugManager;
@@ -98,11 +102,11 @@ public class DarkvaleHudSystem extends EntityTickingSystem<EntityStore> {
                                 playtimeStore.addMillis(mappedUuid, elapsed);
                                 playtimeStore.save();
                             }
-// detach hud if still attached to player (best-effort)
+                            // detach hud if still attached to player (best-effort) via registrar
                             try {
                                 Player p = (Player) store.getComponent(ref, Player.getComponentType());
                                 if (p != null) {
-                                    com.example.exampleplugin.darkvalehud.hud.DarkvaleHudRegistrar.hideHud(p, playerRef);
+                                    DarkvaleHudRegistrar.hideHud(p, playerRef);
                                 }
                             } catch (Throwable ignored) {}
                         } catch (Throwable ignored) {}
@@ -163,9 +167,24 @@ public class DarkvaleHudSystem extends EntityTickingSystem<EntityStore> {
             if (hud == null) {
                 hud = new DarkvaleHud(playerRef, this.debugManager, ref);
                 huds.put(playerRef, hud);
-                try { com.example.exampleplugin.darkvalehud.hud.DarkvaleHudRegistrar.showHud(player, playerRef, hud); } catch (Throwable ignored) {}
+                try {
+                    // register via registrar that calls MultipleHUD (compile-time)
+                    DarkvaleHudRegistrar.showHud(player, playerRef, hud);
+                } catch (Throwable ignored) {}
                 if (ref != null) joinTimestamps.put(ref, joinTimestamps.getOrDefault(ref, System.currentTimeMillis()));
-                try { hud.show(); } catch (Throwable ignored) {}
+
+                // Safely show HUD using world.execute if available
+                try {
+                    World world = ((EntityStore) store.getExternalData()).getWorld();
+                    final DarkvaleHud hudFinal = hud; // final copy for lambda capture
+                    if (world != null) {
+                        world.execute(() -> {
+                            try { hudFinal.show(); } catch (Throwable ignoredShow) {}
+                        });
+                    } else {
+                        try { hudFinal.show(); } catch (Throwable ignored) {}
+                    }
+                } catch (Throwable ignored) {}
             }
 
             // Make sure the toggle state has taken effect before updating content
@@ -224,7 +243,18 @@ public class DarkvaleHudSystem extends EntityTickingSystem<EntityStore> {
             hud.setFooter("www.darkvale.com");
 
             // --- SHOW: original behavior — write every tick (this keeps client updated right after transfer)
-            try { hud.show(); } catch (Throwable ignored) {}
+            try {
+                // Prefer world.execute scheduling to mitigate timing issues
+                World world = ((EntityStore) store.getExternalData()).getWorld();
+                final DarkvaleHud hudFinal2 = hud; // final copy for lambda capture
+                if (world != null) {
+                    world.execute(() -> {
+                        try { hudFinal2.show(); } catch (Throwable ignoredShow) {}
+                    });
+                } else {
+                    hudFinal2.show();
+                }
+            } catch (Throwable ignored) {}
 
         } catch (Throwable ignored) {
             // keep tick robust

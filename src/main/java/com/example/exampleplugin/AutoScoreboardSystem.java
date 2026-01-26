@@ -1,5 +1,7 @@
 package com.example.exampleplugin;
 
+import com.example.exampleplugin.darkvalehud.hud.DarkvaleHudRegistrar;
+import com.example.exampleplugin.darkvalehud.hud.DarkvaleHudHelper;
 import com.hypixel.hytale.component.ArchetypeChunk;
 import com.hypixel.hytale.component.CommandBuffer;
 import com.hypixel.hytale.component.Holder;
@@ -12,13 +14,13 @@ import com.hypixel.hytale.server.core.entity.entities.Player;
 import com.hypixel.hytale.server.core.entity.entities.player.hud.HudManager;
 import com.hypixel.hytale.server.core.modules.entity.component.TransformComponent;
 import com.hypixel.hytale.server.core.universe.PlayerRef;
-import com.hypixel.hytale.server.core.universe.world.storage.EntityStore;
-import com.hypixel.hytale.server.core.HytaleServer;
 import com.hypixel.hytale.server.core.universe.world.World;
+import com.hypixel.hytale.server.core.universe.world.storage.EntityStore;
 import com.hypixel.hytale.server.core.entity.UUIDComponent;
 import com.hypixel.hytale.component.ComponentType;
 import com.hypixel.hytale.server.core.entity.EntityUtils;
 import com.hypixel.hytale.component.system.tick.EntityTickingSystem;
+
 import javax.annotation.Nonnull;
 import java.lang.reflect.Method;
 import java.text.DecimalFormat;
@@ -26,8 +28,6 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.TimeUnit;
-import java.util.function.Consumer;
 
 /**
  * AutoScoreboardSystem reimplemented in the ticking style used by your working DarkvaleHudSystem.
@@ -125,20 +125,25 @@ public final class AutoScoreboardSystem extends EntityTickingSystem<EntityStore>
                 } catch (Throwable ignored) {}
                 joinTimestamps.put(playerRef, System.currentTimeMillis());
 
-                // Attach hud on this world thread
+                // Attach hud via DarkvaleHudRegistrar (MultipleHUD)
                 try {
-                    HudManager hm = player.getHudManager();
-                    if (hm != null) {
-                        hm.setCustomHud(playerRef, hud);
-                        try {
-                            if (playerRef.getPacketHandler() != null) hud.show();
-                        } catch (Throwable t) {
-                            LOGGER.atWarning().withCause(t).log("[AUTOSCORE] hud.show() failed on attach");
-                        }
-                    }
+                    DarkvaleHudRegistrar.showHud(player, playerRef, hud);
                 } catch (Throwable t) {
-                    LOGGER.atWarning().withCause(t).log("[AUTOSCORE] Failed to attach hud for playerRef");
+                    LOGGER.atWarning().withCause(t).log("[AUTOSCORE] Failed to register hud with MHUD");
                 }
+
+                // schedule safe show via world
+                try {
+                    World world = ((EntityStore) store.getExternalData()).getWorld();
+                    final ScoreboardHud hudFinal = hud; // <-- add this final copy (or DarkvaleHud final copy where appropriate)
+                    if (world != null) {
+                        world.execute(() -> {
+                            try { hudFinal.show(); } catch (Throwable ignoredShow) {}
+                        });
+                    } else {
+                        hud.show();
+                    }
+                } catch (Throwable ignored) {}
 
                 // Try to resolve and set rank initially
                 UUID uuid = refToUuid.get(playerRef);
@@ -214,13 +219,13 @@ public final class AutoScoreboardSystem extends EntityTickingSystem<EntityStore>
         }
 
         try {
-// detach HUD if present (use registrar for MultipleHUD compatibility)
+            // detach HUD if present (use registrar for MultipleHUD compatibility)
             ScoreboardHud s = huds.remove(playerRef);
             if (s != null && ref != null && ref.isValid() && store != null) {
                 try {
                     Player p = (Player) store.getComponent(ref, Player.getComponentType());
                     if (p != null) {
-                        com.example.exampleplugin.darkvalehud.hud.DarkvaleHudRegistrar.hideHud(p, playerRef);
+                        DarkvaleHudRegistrar.hideHud(p, playerRef);
                     }
                 } catch (Throwable ignored) {}
             }
@@ -328,7 +333,7 @@ public final class AutoScoreboardSystem extends EntityTickingSystem<EntityStore>
 
             Class<?> eventClass = Class.forName("net.luckperms.api.event.user.UserDataRecalculateEvent");
 
-            Consumer<Object> consumer = new Consumer<>() {
+            java.util.function.Consumer<Object> consumer = new java.util.function.Consumer<>() {
                 @Override
                 public void accept(Object event) {
                     try {
@@ -339,7 +344,7 @@ public final class AutoScoreboardSystem extends EntityTickingSystem<EntityStore>
                 }
             };
 
-            Method subscribe = eventBus.getClass().getMethod("subscribe", Class.class, Consumer.class);
+            Method subscribe = eventBus.getClass().getMethod("subscribe", Class.class, java.util.function.Consumer.class);
             subscribe.invoke(eventBus, eventClass, consumer);
 
             LOGGER.atInfo().log("[AUTOSCORE] Registered LuckPerms UserDataRecalculateEvent listener (reflective)");

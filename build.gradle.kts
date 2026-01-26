@@ -21,8 +21,9 @@ repositories {
 dependencies {
     compileOnly(libs.jetbrains.annotations)
     compileOnly(libs.jspecify)
-    compileOnly(files("libs/luckperms-api.jar"))
+    compileOnly(files("libs/api-5.4.jar"))
     compileOnly("net.luckperms:api:5.4")
+    compileOnly(files("libs/MultipleHUD-1.0.4.jar"))
 
     if (hytaleAssets.exists()) {
         compileOnly(files(hytaleAssets))
