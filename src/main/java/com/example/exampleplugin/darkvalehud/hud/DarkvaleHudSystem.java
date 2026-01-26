@@ -7,6 +7,7 @@ import com.hypixel.hytale.math.util.MathUtil;
 import com.hypixel.hytale.math.vector.Vector3d;
 import com.hypixel.hytale.server.core.entity.EntityUtils;
 import com.hypixel.hytale.server.core.entity.entities.Player;
+import com.hypixel.hytale.server.core.entity.entities.player.hud.CustomUIHud;
 import com.hypixel.hytale.server.core.modules.entity.component.TransformComponent;
 import com.hypixel.hytale.server.core.universe.PlayerRef;
 import com.hypixel.hytale.server.core.universe.world.WorldMapTracker;
@@ -14,7 +15,7 @@ import com.hypixel.hytale.server.core.universe.world.storage.EntityStore;
 import com.example.exampleplugin.darkvalehud.data.DebugManager;
 import com.example.exampleplugin.PlaytimeStore;
 import com.hypixel.hytale.server.core.entity.UUIDComponent;
-import com.example.exampleplugin.darkvalehud.hud.DarkvaleHudRegistrar; // ensure registrar exists and calls MHUD
+import com.example.exampleplugin.darkvalehud.hud.DarkvaleHudRegistrar;
 import com.hypixel.hytale.server.core.universe.world.World;
 
 import java.util.HashMap;
@@ -25,12 +26,12 @@ import java.util.UUID;
 import java.lang.reflect.Method;
 
 /**
- * Combined DarkvaleHudSystem:
- * - setPosition(...) + hud.show() each tick (preserves coords behavior)
- * - persists playtime across transfers and disconnects
- * - copies debug-enabled flag across transfers so toggle persists
+ * DarkvaleHudSystem (fixed for MultipleHUD compatibility and updating)
  *
- * This file is the full class replacement with MHUD attach/detach via DarkvaleHudRegistrar.
+ * - Registers HUD via DarkvaleHudRegistrar (which uses MultipleHUD when present)
+ * - When MultipleHUD is present, triggers the wrapper HUD's show() so inner HUD content is rebuilt & sent
+ * - Only calls inner hud.show() when MultipleHUD is not present (fallback path)
+ * - Uses final copies for lambda captures when scheduling show()
  */
 public class DarkvaleHudSystem extends EntityTickingSystem<EntityStore> {
     private final DebugManager debugManager;
@@ -76,6 +77,17 @@ public class DarkvaleHudSystem extends EntityTickingSystem<EntityStore> {
     @Override
     public Query<EntityStore> getQuery() {
         return this.query;
+    }
+
+    // Helper to detect if MultipleHUD is available at runtime.
+    // Uses Class.forName so it won't hard-fail when MHUD is missing.
+    private boolean isMultipleHudAvailable() {
+        try {
+            Class.forName("com.buuz135.mhud.MultipleHUD");
+            return true;
+        } catch (Throwable t) {
+            return false;
+        }
     }
 
     @Override
@@ -173,24 +185,43 @@ public class DarkvaleHudSystem extends EntityTickingSystem<EntityStore> {
                 } catch (Throwable ignored) {}
                 if (ref != null) joinTimestamps.put(ref, joinTimestamps.getOrDefault(ref, System.currentTimeMillis()));
 
-                // Safely show HUD using world.execute if available
+                // Safely show HUD if MultipleHUD is NOT present (fallback behavior).
+                // If MultipleHUD is present, it will handle building & sending the UI, so do not call inner hud.show().
                 try {
-                    World world = ((EntityStore) store.getExternalData()).getWorld();
-                    final DarkvaleHud hudFinal = hud; // final copy for lambda capture
-                    if (world != null) {
-                        world.execute(() -> {
-                            try { hudFinal.show(); } catch (Throwable ignoredShow) {}
-                        });
+                    if (!isMultipleHudAvailable()) {
+                        World world = ((EntityStore) store.getExternalData()).getWorld();
+                        final DarkvaleHud hudFinal = hud; // final copy for lambda capture
+                        if (world != null) {
+                            world.execute(() -> {
+                                try { hudFinal.show(); } catch (Throwable ignoredShow) {}
+                            });
+                        } else {
+                            try { hudFinal.show(); } catch (Throwable ignored) {}
+                        }
                     } else {
-                        try { hudFinal.show(); } catch (Throwable ignored) {}
+                        // If MultipleHUD is present, ensure the wrapper sends a first build:
+                        try {
+                            CustomUIHud wrapper = player.getHudManager().getCustomHud();
+                            if (wrapper != null) {
+                                // call wrapper.show() to make it rebuild combined UI
+                                wrapper.show();
+                            }
+                        } catch (Throwable ignored) {}
                     }
                 } catch (Throwable ignored) {}
             }
 
             // Make sure the toggle state has taken effect before updating content
             if (!this.debugManager.isDebugEnabled(ref)) {
-                // ensure the HUD is hidden/updated once (build will hide)
-                try { hud.show(); } catch (Throwable ignored) {}
+                // For fallback (no MHUD) ensure the HUD is shown/updated once (build will hide).
+                if (!isMultipleHudAvailable()) {
+                    try { hud.show(); } catch (Throwable ignored) {}
+                } else {
+                    try {
+                        CustomUIHud wrapper = player.getHudManager().getCustomHud();
+                        if (wrapper != null) wrapper.show();
+                    } catch (Throwable ignored) {}
+                }
                 return;
             }
 
@@ -243,16 +274,23 @@ public class DarkvaleHudSystem extends EntityTickingSystem<EntityStore> {
             hud.setFooter("www.darkvale.com");
 
             // --- SHOW: original behavior — write every tick (this keeps client updated right after transfer)
+            // When MultipleHUD is present, call wrapper.show() to rebuild combined UI. Otherwise call inner hud.show().
             try {
-                // Prefer world.execute scheduling to mitigate timing issues
-                World world = ((EntityStore) store.getExternalData()).getWorld();
-                final DarkvaleHud hudFinal2 = hud; // final copy for lambda capture
-                if (world != null) {
-                    world.execute(() -> {
-                        try { hudFinal2.show(); } catch (Throwable ignoredShow) {}
-                    });
+                if (!isMultipleHudAvailable()) {
+                    World world = ((EntityStore) store.getExternalData()).getWorld();
+                    final DarkvaleHud hudFinal2 = hud; // final copy for lambda capture
+                    if (world != null) {
+                        world.execute(() -> {
+                            try { hudFinal2.show(); } catch (Throwable ignoredShow) {}
+                        });
+                    } else {
+                        hudFinal2.show();
+                    }
                 } else {
-                    hudFinal2.show();
+                    try {
+                        CustomUIHud wrapper = player.getHudManager().getCustomHud();
+                        if (wrapper != null) wrapper.show();
+                    } catch (Throwable ignored) {}
                 }
             } catch (Throwable ignored) {}
 
