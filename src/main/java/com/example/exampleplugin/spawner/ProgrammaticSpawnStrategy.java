@@ -26,9 +26,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 /**
  * ProgrammaticSpawnStrategy — uses NPCPlugin spawn API to create entities similarly to HytaleSpawners.
  *
- * Adjusted to avoid ambiguous method references and generic capture issues.
- *
- * Expectation: called on the world thread (ProximitySpawnSystem schedules world.execute()).
+ * Adjusted: now calls spawningContext.set(world, x, y, z) and uses spawningContext.newPosition()
+ * before invoking NPCPlugin.spawnEntity(...) so the spawn will be tested/adjusted the same way core code does.
  */
 public class ProgrammaticSpawnStrategy implements ProximitySpawnSystem.SpawnStrategy {
     private static final HytaleLogger LOG = HytaleLogger.forEnclosingClass();
@@ -60,14 +59,14 @@ public class ProgrammaticSpawnStrategy implements ProximitySpawnSystem.SpawnStra
             if (debug) LOG.atInfo().log("[ProgrammaticSpawn] triggered spawn for type=%s at (%.1f,%.1f,%.1f) by=%s",
                     spawnTypeId, x, y, z, safePlayerString(trigger));
 
-            // entityStore is a Store<EntityStore>
+            // entityStore typed correctly
             Store<EntityStore> entityStore = world.getEntityStore().getStore();
             if (entityStore == null) {
                 LOG.atWarning().log("[ProgrammaticSpawn] entity store missing; aborting spawn");
                 return;
             }
 
-            // Try to discover the NPC component type reflectively (avoid compile-time hard dependency)
+            // Try to discover the NPC component type reflectively (avoid hard compile-time dependency issues)
             Object npcComponentType = null;
             try {
                 Class<?> npcClass = Class.forName("com.hypixel.hytale.server.core.entity.entities.npc.NPCEntity");
@@ -119,6 +118,7 @@ public class ProgrammaticSpawnStrategy implements ProximitySpawnSystem.SpawnStra
 
             // NPCPlugin role index & builder
             int roleIndex = NPCPlugin.get().getIndex(spawnTypeId);
+            if (debug) LOG.atInfo().log("[ProgrammaticSpawn] roleIndex for '%s' -> %d", spawnTypeId, roleIndex);
             if (roleIndex < 0) {
                 LOG.atWarning().log("[ProgrammaticSpawn] NPCPlugin has no index for spawn type '%s' (index=%d). Aborting programmatic spawn.", spawnTypeId, roleIndex);
                 return;
@@ -184,32 +184,51 @@ public class ProgrammaticSpawnStrategy implements ProximitySpawnSystem.SpawnStra
                     continue;
                 }
 
-                // Spawn via NPCPlugin
+                // Spawn via NPCPlugin — use SpawningContext.set(world, x, y, z) before spawning
                 try {
                     SpawningContext spawningContext = new SpawningContext();
                     ISpawnableWithModel spawnable = (ISpawnableWithModel) roleBuilder;
-                    if (!spawningContext.setSpawnable(spawnable)) {
-                        LOG.atWarning().log("[ProgrammaticSpawn] SpawningContext.setSpawnable returned false for type %s", spawnTypeId);
+                    boolean setSpawnableOk = false;
+                    try {
+                        setSpawnableOk = spawningContext.setSpawnable(spawnable);
+                    } catch (Throwable t) {
+                        setSpawnableOk = false;
+                    }
+                    if (!setSpawnableOk) {
+                        LOG.atWarning().log("[ProgrammaticSpawn] spawningContext.setSpawnable returned false for type %s; skipping attempt", spawnTypeId);
                         continue;
                     }
+
+                    // Now set the world/position so the context can compute valid spawn offset/newPosition/model
+                    boolean posSet = false;
+                    try {
+                        posSet = spawningContext.set(world, valid.getX(), valid.getY(), valid.getZ());
+                    } catch (Throwable t) {
+                        posSet = false;
+                    }
+                    if (!posSet) {
+                        if (debug) LOG.atInfo().log("[ProgrammaticSpawn] spawningContext.set(world, x,y,z) returned false for candidate (%.2f,%.2f,%.2f)", valid.getX(), valid.getY(), valid.getZ());
+                        continue;
+                    }
+
                     Model model = spawningContext.getModel();
+                    Vector3d spawnPos = spawningContext.newPosition(); // exact position the context determined
 
-                    Vector3d spawnPos = new Vector3d(valid.getX() + 0.5, valid.getY(), valid.getZ() + 0.5);
+                    if (debug) LOG.atInfo().log("[ProgrammaticSpawn] about to call NPCPlugin.spawnEntity(roleIndex=%d, pos=%s, model=%s)", roleIndex, spawnPos, model != null ? model.toString() : "null");
 
-                    var spawned = NPCPlugin.get().spawnEntity(
-                            world.getEntityStore().getStore(),
-                            roleIndex,
-                            spawnPos,
-                            new Vector3f(0, 0, 0),
-                            model,
-                            null
-                    );
+                    Pair<Ref<EntityStore>, NPCEntity> spawned =
+                            NPCPlugin.get().spawnEntity(world.getEntityStore().getStore(),
+                                    roleIndex,
+                                    spawnPos,
+                                    new Vector3f(0, 0, 0),
+                                    model,
+                                    null);
 
-                    if (spawned != null) {
+                    if (spawned != null && spawned.first() != null && spawned.second() != null) {
                         spawnedTotal++;
                         if (debug) LOG.atInfo().log("[ProgrammaticSpawn] spawned %s at (%.2f,%.2f,%.2f) (attempt %d)", spawnTypeId, spawnPos.getX(), spawnPos.getY(), spawnPos.getZ(), attempts);
                     } else {
-                        if (debug) LOG.atWarning().log("[ProgrammaticSpawn] NPCPlugin.spawnEntity returned null for type=%s at (%.2f,%.2f,%.2f)", spawnTypeId, spawnPos.getX(), spawnPos.getY(), spawnPos.getZ());
+                        if (debug) LOG.atWarning().log("[ProgrammaticSpawn] spawnEntity returned null for type=%s (attempt %d).", spawnTypeId, attempts);
                     }
                 } catch (Throwable t) {
                     LOG.atWarning().withCause(t).log("[ProgrammaticSpawn] exception while attempting programmatic spawn of %s", spawnTypeId);
@@ -223,10 +242,6 @@ public class ProgrammaticSpawnStrategy implements ProximitySpawnSystem.SpawnStra
         }
     }
 
-    /**
-     * Find an empty spot by moving up from origin until BlockType.EMPTY or null is found.
-     * Returns the valid position or null if none within limit.
-     */
     private Vector3d getValidSpawnPoint(World world, Vector3d origin, int limit) {
         Vector3d pos = new Vector3d(origin.getX(), origin.getY(), origin.getZ());
         for (int i = 0; i < limit; i++) {
