@@ -32,7 +32,8 @@ public class ExamplePlugin extends JavaPlugin {
     private DebugManager debugManager;
     private DungeonManager dungeonManager;
     private ScoreboardManager scoreboardManager;
-
+    private AutoLootPickupSystem autoLootPickupSystem;
+    private DeathRecorderSystem deathRecorderSystem;
     // single manager system instance
     private ProximitySpawnSystem spawnManager;
 
@@ -51,7 +52,11 @@ public class ExamplePlugin extends JavaPlugin {
         this.dungeonManager = new DungeonManager();
 
         this.getEntityStoreRegistry().registerSystem(new DarkvaleHudSystem(this.debugManager));
+        this.autoLootPickupSystem = new AutoLootPickupSystem();
+        this.deathRecorderSystem = new DeathRecorderSystem(this.autoLootPickupSystem);
 
+        this.getEntityStoreRegistry().registerSystem(this.autoLootPickupSystem);
+        this.getEntityStoreRegistry().registerSystem(this.deathRecorderSystem);
         // Commands (existing)
         this.getCommandRegistry().registerCommand(new CustomInstancesNewCommand());
         this.getCommandRegistry().registerCommand(new CustomInstancesCopyCommand());
@@ -75,13 +80,8 @@ public class ExamplePlugin extends JavaPlugin {
     protected void start() {
         super.start();
 
-        // Auto-loot: consume drops before they spawn
-        getEntityStoreRegistry().registerSystem(new DeathImmediateLootSystem());
 
         // Auto-pickup fallback for spawned item entities (uses death markers)
-        DeathMarkerSystem markerSystem = new DeathMarkerSystem();
-        getEntityStoreRegistry().registerSystem(markerSystem);
-        getEntityStoreRegistry().registerSystem(new ItemAutoPickupSystem(markerSystem));
 
         getEventRegistry().registerGlobal(PlayerReadyEvent.class, this::onPlayerReady);
 
