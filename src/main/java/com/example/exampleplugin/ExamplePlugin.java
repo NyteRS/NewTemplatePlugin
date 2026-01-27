@@ -66,6 +66,7 @@ public class ExamplePlugin extends JavaPlugin {
         this.getCommandRegistry().registerCommand(new DeleteSpawnerCommand(this));
         this.getCommandRegistry().registerCommand(new ReloadSpawnersCommand(this));
 
+
         // Create and register the single spawn manager system
         this.spawnManager = new ProximitySpawnSystem();
         this.getEntityStoreRegistry().registerSystem(this.spawnManager);
@@ -76,7 +77,8 @@ public class ExamplePlugin extends JavaPlugin {
     @Override
     protected void start() {
         super.start();
-
+        DeathAutoPickupSystem autoPickup = new DeathAutoPickupSystem();
+        getEntityStoreRegistry().registerSystem(autoPickup);
         getEventRegistry().registerGlobal(PlayerReadyEvent.class, this::onPlayerReady);
 
         // Load spawn definitions once worlds are fully loaded, then register spawn entries
