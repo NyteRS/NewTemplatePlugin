@@ -14,7 +14,6 @@ import com.hypixel.hytale.server.core.entity.entities.Player;
 import com.example.exampleplugin.darkvalehud.command.DebugCommand;
 import com.example.exampleplugin.darkvalehud.data.DebugManager;
 import com.example.exampleplugin.darkvalehud.hud.DarkvaleHudSystem;
-
 import com.example.exampleplugin.spawner.*;
 
 import com.hypixel.hytale.component.Ref;
@@ -63,11 +62,6 @@ public class ExamplePlugin extends JavaPlugin {
         this.getCommandRegistry().registerCommand(new JoinInstanceCommand());
         this.getCommandRegistry().registerCommand(new DebugCommand(this, this.debugManager));
 
-        // Install global/per-command suggestion provider so players get command suggestions when typing '/'
-
-        // Ensure plugin data folder exists
-        File df = this.getDataDirectory().toFile();
-        if (!df.exists()) df.mkdirs();
 
         this.getLogger().at(Level.INFO).log("Simple Debug Info HUD Plugin loaded successfully!");
     }
