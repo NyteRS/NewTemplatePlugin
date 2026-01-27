@@ -6,9 +6,9 @@ import com.google.gson.GsonBuilder;
 import com.hypixel.hytale.math.vector.Vector3d;
 import com.hypixel.hytale.server.core.Message;
 import com.hypixel.hytale.server.core.command.system.CommandContext;
-import com.hypixel.hytale.server.core.command.system.basecommands.AbstractPlayerCommand;
-import com.hypixel.hytale.server.core.command.system.arguments.system.RequiredArg;
 import com.hypixel.hytale.server.core.command.system.arguments.types.ArgTypes;
+import com.hypixel.hytale.server.core.command.system.arguments.system.RequiredArg;
+import com.hypixel.hytale.server.core.command.system.basecommands.AbstractPlayerCommand;
 import com.hypixel.hytale.server.core.universe.PlayerRef;
 import com.hypixel.hytale.server.core.universe.world.World;
 import com.hypixel.hytale.server.core.universe.world.storage.EntityStore;
@@ -23,19 +23,21 @@ import java.io.FileWriter;
 import java.util.List;
 
 /**
- * /spawnercreate <mob> <count> <cooldownSeconds> <activationRadius>
+ * /spawnercreate <mob> <count> <cooldownSeconds> <activationRadius> <exact>
  *
- * Creates a spawn entry using the player's current world & position and appends it to spawns.json.
- * Example: /spawnercreate zombie 3 30 10
+ * exact: true -> spawn exactly on coordinates
+ *        false -> spawn randomly within radius
+ *
+ * exact is optional (default: false)
  */
 public class SpawnerCreateCommand extends AbstractPlayerCommand {
     private final ExamplePlugin plugin;
 
-    // Required arguments
     private final RequiredArg<String> mobArg = withRequiredArg("mob", "Mob type id (e.g. zombie)", ArgTypes.STRING);
     private final RequiredArg<Integer> countArg = withRequiredArg("count", "How many to spawn each activation", ArgTypes.INTEGER);
     private final RequiredArg<Integer> cooldownArg = withRequiredArg("cooldown", "Cooldown in seconds", ArgTypes.INTEGER);
     private final RequiredArg<Integer> radiusArg = withRequiredArg("radius", "Activation radius in blocks", ArgTypes.INTEGER);
+    private final RequiredArg<Boolean> exactArg = withRequiredArg("exact", "true/false - spawn exactly at coords", ArgTypes.BOOLEAN);
 
     public SpawnerCreateCommand(ExamplePlugin plugin) {
         super("spawnercreate", "Create a spawn entry at your current location");
@@ -54,7 +56,6 @@ public class SpawnerCreateCommand extends AbstractPlayerCommand {
 
     @Override
     protected void execute(CommandContext context, Store<EntityStore> store, Ref<EntityStore> ref, PlayerRef playerRef, World world) {
-        // Validate world & player ref
         if (ref == null || !ref.isValid()) {
             context.sendMessage(Message.raw("Unable to determine your entity reference."));
             return;
@@ -66,20 +67,23 @@ public class SpawnerCreateCommand extends AbstractPlayerCommand {
             return;
         }
 
-        // get transform component for position
         TransformComponent transform = (TransformComponent) store.getComponent(ref, TransformComponent.getComponentType());
         if (transform == null) {
             context.sendMessage(Message.raw("Could not read your position."));
             return;
         }
 
-        // read args
         String mob = this.mobArg.get(context);
         int count = Math.max(1, this.countArg.get(context));
         int cooldownSeconds = Math.max(0, this.cooldownArg.get(context));
         int radius = Math.max(0, this.radiusArg.get(context));
+        boolean exact = false;
+        try {
+            exact = this.exactArg.get(context);
+        } catch (Throwable ignored) {
+            exact = false;
+        }
 
-        // Build spawn definition
         SpawnDefinition sd = new SpawnDefinition();
         sd.id = "spawn_" + System.currentTimeMillis();
         try {
@@ -97,14 +101,12 @@ public class SpawnerCreateCommand extends AbstractPlayerCommand {
         sd.mob = mob;
         sd.cooldownMillis = (long) cooldownSeconds * 1000L;
         sd.enabled = true;
-
-        // Fill optional fields so your loader/strategy can pick them up (since we added typed fields)
         sd.spawnCount = count;
-        sd.maxNearby = 6;    // sensible default; you may want to ask the player or expose another arg
+        sd.maxNearby = 6;
         sd.maxAttempts = 8;
         sd.debug = false;
+        sd.spawnOnExact = exact;
 
-        // Append to spawns.json (use same data folder as loader)
         try {
             List<SpawnDefinition> list = SpawnConfigLoader.load(this.plugin);
             list.add(sd);

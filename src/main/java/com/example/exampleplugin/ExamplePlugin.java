@@ -61,7 +61,7 @@ public class ExamplePlugin extends JavaPlugin {
         this.getCommandRegistry().registerCommand(new ListInstancesCommand());
         this.getCommandRegistry().registerCommand(new JoinInstanceCommand());
         this.getCommandRegistry().registerCommand(new DebugCommand(this, this.debugManager));
-
+        this.getCommandRegistry().registerCommand(new SpawnerCreateCommand(this));
 
 
         // Create and register the single spawn manager system
@@ -140,7 +140,9 @@ public class ExamplePlugin extends JavaPlugin {
                 int maxNearby = (def.maxNearby != null) ? def.maxNearby : 6;
                 int maxAttempts = (def.maxAttempts != null) ? def.maxAttempts : 8;
                 boolean debug = (def.debug != null) ? def.debug : false;
-                strategy = new ProgrammaticSpawnStrategy(def.mob, spawnCount, (int) Math.round(def.radius), maxNearby, maxAttempts, debug);
+                boolean spawnOnExact = (def.spawnOnExact != null) ? def.spawnOnExact : false;
+
+                strategy = new ProgrammaticSpawnStrategy(def.mob, spawnCount, (int) Math.round(def.radius), maxNearby, maxAttempts, debug, spawnOnExact);
             } else {
                 LOGGER.atWarning().log("Spawn definition %s has neither commandTemplate nor mob; skipping", def.id);
                 continue;
