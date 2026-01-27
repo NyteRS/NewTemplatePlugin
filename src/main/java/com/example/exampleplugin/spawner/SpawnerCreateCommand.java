@@ -6,8 +6,9 @@ import com.google.gson.GsonBuilder;
 import com.hypixel.hytale.math.vector.Vector3d;
 import com.hypixel.hytale.server.core.Message;
 import com.hypixel.hytale.server.core.command.system.CommandContext;
-import com.hypixel.hytale.server.core.command.system.arguments.types.ArgTypes;
+import com.hypixel.hytale.server.core.command.system.arguments.system.OptionalArg;
 import com.hypixel.hytale.server.core.command.system.arguments.system.RequiredArg;
+import com.hypixel.hytale.server.core.command.system.arguments.types.ArgTypes;
 import com.hypixel.hytale.server.core.command.system.basecommands.AbstractPlayerCommand;
 import com.hypixel.hytale.server.core.universe.PlayerRef;
 import com.hypixel.hytale.server.core.universe.world.World;
@@ -23,12 +24,13 @@ import java.io.FileWriter;
 import java.util.List;
 
 /**
- * /spawnercreate <mob> <count> <cooldownSeconds> <activationRadius> <exact>
+ * /spawnercreate <mob> <count> <cooldownSeconds> <activationRadius> <exact> [--id <id>]
  *
  * exact: true -> spawn exactly on coordinates
  *        false -> spawn randomly within radius
  *
- * exact is optional (default: false)
+ * id is optional. If provided, the command will refuse duplicate ids.
+ * The new spawn will be appended to spawns.json and immediately registered in the running manager.
  */
 public class SpawnerCreateCommand extends AbstractPlayerCommand {
     private final ExamplePlugin plugin;
@@ -38,6 +40,9 @@ public class SpawnerCreateCommand extends AbstractPlayerCommand {
     private final RequiredArg<Integer> cooldownArg = withRequiredArg("cooldown", "Cooldown in seconds", ArgTypes.INTEGER);
     private final RequiredArg<Integer> radiusArg = withRequiredArg("radius", "Activation radius in blocks", ArgTypes.INTEGER);
     private final RequiredArg<Boolean> exactArg = withRequiredArg("exact", "true/false - spawn exactly at coords", ArgTypes.BOOLEAN);
+
+    // optional id argument (user-specified)
+    private final OptionalArg<String> idArg = withOptionalArg("id", "Optional spawn id (string) - if provided, must be unique", ArgTypes.STRING);
 
     public SpawnerCreateCommand(ExamplePlugin plugin) {
         super("spawnercreate", "Create a spawn entry at your current location");
@@ -55,7 +60,7 @@ public class SpawnerCreateCommand extends AbstractPlayerCommand {
     }
 
     @Override
-    protected void execute(CommandContext context, Store<EntityStore> store, Ref<EntityStore> ref, PlayerRef playerRef, World world) {
+    protected void execute(@Nonnull CommandContext context, Store<EntityStore> store, Ref<EntityStore> ref, PlayerRef playerRef, World world) {
         if (ref == null || !ref.isValid()) {
             context.sendMessage(Message.raw("Unable to determine your entity reference."));
             return;
@@ -77,15 +82,38 @@ public class SpawnerCreateCommand extends AbstractPlayerCommand {
         int count = Math.max(1, this.countArg.get(context));
         int cooldownSeconds = Math.max(0, this.cooldownArg.get(context));
         int radius = Math.max(0, this.radiusArg.get(context));
-        boolean exact = false;
+        boolean exact = Boolean.TRUE.equals(this.exactArg.get(context));
+
+        // optional id (user-provided)
+        String providedId = null;
         try {
-            exact = this.exactArg.get(context);
+            providedId = this.idArg.get(context);
         } catch (Throwable ignored) {
-            exact = false;
+            providedId = null;
+        }
+
+        // Load existing definitions to check for duplicates
+        List<SpawnDefinition> list = SpawnConfigLoader.load(this.plugin);
+        if (list == null) {
+            context.sendMessage(Message.raw("Failed to read spawns.json (cannot check duplicates)."));
+            return;
+        }
+        if (providedId != null && !providedId.isBlank()) {
+            for (SpawnDefinition existing : list) {
+                if (existing != null && providedId.equals(existing.id)) {
+                    context.sendMessage(Message.raw("A spawn with id '" + providedId + "' already exists. Choose a different id."));
+                    return;
+                }
+            }
         }
 
         SpawnDefinition sd = new SpawnDefinition();
-        sd.id = "spawn_" + System.currentTimeMillis();
+        if (providedId != null && !providedId.isBlank()) {
+            sd.id = providedId;
+        } else {
+            sd.id = "spawn_" + System.currentTimeMillis();
+        }
+
         try {
             sd.world = (world == null) ? null : world.getName();
         } catch (Throwable ignored) {
@@ -108,7 +136,7 @@ public class SpawnerCreateCommand extends AbstractPlayerCommand {
         sd.spawnOnExact = exact;
 
         try {
-            List<SpawnDefinition> list = SpawnConfigLoader.load(this.plugin);
+            // Append to list (no duplicate check needed here because we checked above)
             list.add(sd);
 
             File dataFolder = this.plugin.getDataDirectory().toFile();
@@ -120,8 +148,16 @@ public class SpawnerCreateCommand extends AbstractPlayerCommand {
                 gson.toJson(list, w);
             }
 
+            // Immediately register with running manager
+            boolean registered = this.plugin.registerSpawn(sd);
+            if (!registered) {
+                context.sendMessage(Message.raw("Spawn saved to spawns.json, but failed to register in running manager (duplicate id or manager missing)."));
+                context.sendMessage(Message.raw("You may need to run /reloadspawners."));
+                return;
+            }
+
             String json = gson.toJson(sd);
-            context.sendMessage(Message.raw("Spawn created and saved to spawns.json:"));
+            context.sendMessage(Message.raw("Spawn created, saved to spawns.json, and registered:"));
             context.sendMessage(Message.raw(json));
         } catch (Throwable t) {
             context.sendMessage(Message.raw("Failed to save spawn definition: " + t.getMessage()));

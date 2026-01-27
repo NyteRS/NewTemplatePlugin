@@ -94,6 +94,31 @@ public class ExamplePlugin extends JavaPlugin {
             }
         });
     }
+    /**
+     * Register a single spawn definition immediately into the running spawn manager.
+     * Returns true if the spawn was registered (or false if spawnManager missing or duplicate).
+     */
+    public boolean registerSpawn(SpawnDefinition def) {
+        if (def == null) return false;
+        if (this.spawnManager == null) return false;
+
+        ProximitySpawnSystem.SpawnStrategy strategy;
+        if (def.commandTemplate != null && !def.commandTemplate.isBlank()) {
+            strategy = new CommandSpawnStrategy(def.commandTemplate, true);
+        } else if (def.mob != null && !def.mob.isBlank()) {
+            int spawnCount = (def.spawnCount != null) ? def.spawnCount : 1;
+            int maxNearby = (def.maxNearby != null) ? def.maxNearby : 6;
+            int maxAttempts = (def.maxAttempts != null) ? def.maxAttempts : 8;
+            boolean debug = (def.debug != null) ? def.debug : false;
+            boolean spawnOnExact = (def.spawnOnExact != null) ? def.spawnOnExact : false;
+            strategy = new ProgrammaticSpawnStrategy(def.mob, spawnCount, (int) Math.round(def.radius), maxNearby, maxAttempts, debug, spawnOnExact);
+        } else {
+            LOGGER.atWarning().log("Spawn definition %s has neither commandTemplate nor mob; skipping", def.id);
+            return false;
+        }
+
+        return this.spawnManager.addSpawn(def, strategy);
+    }
 
     private void onPlayerReady(@Nonnull PlayerReadyEvent event) {
         Ref<EntityStore> ref = event.getPlayer().getReference();
