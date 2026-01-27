@@ -1,23 +1,21 @@
 package com.example.exampleplugin;
 
 import com.example.exampleplugin.custominstance.*;
+import com.example.exampleplugin.darkvalehud.command.DebugCommand;
+import com.example.exampleplugin.darkvalehud.data.DebugManager;
 import com.example.exampleplugin.darkvalehud.data.ScoreboardManager;
+import com.example.exampleplugin.darkvalehud.hud.DarkvaleHudSystem;
+import com.example.exampleplugin.spawner.*;
+import com.hypixel.hytale.component.Ref;
+import com.hypixel.hytale.component.Store;
 import com.hypixel.hytale.logger.HytaleLogger;
+import com.hypixel.hytale.server.core.entity.entities.Player;
 import com.hypixel.hytale.server.core.event.events.player.PlayerReadyEvent;
 import com.hypixel.hytale.server.core.plugin.JavaPlugin;
 import com.hypixel.hytale.server.core.plugin.JavaPluginInit;
 import com.hypixel.hytale.server.core.universe.world.World;
 import com.hypixel.hytale.server.core.universe.world.events.AllWorldsLoadedEvent;
 import com.hypixel.hytale.server.core.universe.world.storage.EntityStore;
-import com.hypixel.hytale.server.core.entity.entities.Player;
-
-import com.example.exampleplugin.darkvalehud.command.DebugCommand;
-import com.example.exampleplugin.darkvalehud.data.DebugManager;
-import com.example.exampleplugin.darkvalehud.hud.DarkvaleHudSystem;
-import com.example.exampleplugin.spawner.*;
-
-import com.hypixel.hytale.component.Ref;
-import com.hypixel.hytale.component.Store;
 
 import javax.annotation.Nonnull;
 import java.io.File;
@@ -66,7 +64,6 @@ public class ExamplePlugin extends JavaPlugin {
         this.getCommandRegistry().registerCommand(new DeleteSpawnerCommand(this));
         this.getCommandRegistry().registerCommand(new ReloadSpawnersCommand(this));
 
-
         // Create and register the single spawn manager system
         this.spawnManager = new ProximitySpawnSystem();
         this.getEntityStoreRegistry().registerSystem(this.spawnManager);
@@ -77,17 +74,22 @@ public class ExamplePlugin extends JavaPlugin {
     @Override
     protected void start() {
         super.start();
-        DeathAutoPickupSystem autoPickup = new DeathAutoPickupSystem();
-        getEntityStoreRegistry().registerSystem(autoPickup);
+
+        // Auto-loot: consume drops before they spawn
+        getEntityStoreRegistry().registerSystem(new DeathImmediateLootSystem());
+
+        // Auto-pickup fallback for spawned item entities (uses death markers)
+        DeathMarkerSystem markerSystem = new DeathMarkerSystem();
+        getEntityStoreRegistry().registerSystem(markerSystem);
+        getEntityStoreRegistry().registerSystem(new ItemAutoPickupSystem(markerSystem));
+
         getEventRegistry().registerGlobal(PlayerReadyEvent.class, this::onPlayerReady);
 
         // Load spawn definitions once worlds are fully loaded, then register spawn entries
         getEventRegistry().registerGlobal(AllWorldsLoadedEvent.class, event -> {
             try {
-                // Ensure idempotent (AllWorldsLoaded might be dispatched multiple times)
                 if (spawnsLoaded.compareAndSet(false, true)) {
                     loadSpawnsOnServer();
-
                 } else {
                     LOGGER.atInfo().log("Spawns already loaded, skipping");
                 }
@@ -96,6 +98,7 @@ public class ExamplePlugin extends JavaPlugin {
             }
         });
     }
+
     /**
      * Register a single spawn definition immediately into the running spawn manager.
      * Returns true if the spawn was registered (or false if spawnManager missing or duplicate).
@@ -149,13 +152,6 @@ public class ExamplePlugin extends JavaPlugin {
         });
     }
 
-    /**
-     * Reads spawns.json and registers spawn entries into the single spawnManager.
-     */
-    /**
-     * Clear the current spawn manager and re-load spawns from disk.
-     * Returns number of spawns registered.
-     */
     public int reloadSpawns() {
         if (this.spawnManager != null) {
             this.spawnManager.clearSpawns();
@@ -163,6 +159,7 @@ public class ExamplePlugin extends JavaPlugin {
         loadSpawnsOnServer();
         return (this.spawnManager != null) ? this.spawnManager.getSpawnCount() : 0;
     }
+
     private void loadSpawnsOnServer() {
         List<SpawnDefinition> defs = SpawnConfigLoader.load(this);
         if (defs == null || defs.isEmpty()) {
@@ -189,7 +186,6 @@ public class ExamplePlugin extends JavaPlugin {
                 continue;
             }
 
-            // Add to manager (manager prevents duplicate ids)
             boolean added = this.spawnManager.addSpawn(def, strategy);
             if (!added) {
                 LOGGER.atInfo().log("Skipped adding spawn %s (already present)", def.id);
