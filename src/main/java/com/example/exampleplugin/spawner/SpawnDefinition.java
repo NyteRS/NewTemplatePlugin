@@ -12,6 +12,12 @@ public class SpawnDefinition {
     public long cooldownMillis = 30000L; // cooldown between spawns
     public boolean enabled = true;
 
+    // New optional fields — explicit typed options so Gson will populate them if present:
+    public Integer spawnCount;      // number of mobs to attempt per activation
+    public Integer maxNearby;       // maximum nearby similar entities allowed
+    public Integer maxAttempts;     // maximum attempts to find valid spawn points per activation
+    public Boolean debug;           // enable detailed debug logging for this spawn
+
     @Override
     public String toString() {
         return "SpawnDefinition{" +
@@ -25,6 +31,10 @@ public class SpawnDefinition {
                 ", commandTemplate='" + commandTemplate + '\'' +
                 ", cooldownMillis=" + cooldownMillis +
                 ", enabled=" + enabled +
+                ", spawnCount=" + spawnCount +
+                ", maxNearby=" + maxNearby +
+                ", maxAttempts=" + maxAttempts +
+                ", debug=" + debug +
                 '}';
     }
 }

@@ -61,7 +61,7 @@ public class ExamplePlugin extends JavaPlugin {
         this.getCommandRegistry().registerCommand(new ListInstancesCommand());
         this.getCommandRegistry().registerCommand(new JoinInstanceCommand());
         this.getCommandRegistry().registerCommand(new DebugCommand(this, this.debugManager));
-
+        this.getCommandRegistry().registerCommand(new SpawnerCreateCommand(this));
 
         this.getLogger().at(Level.INFO).log("Simple Debug Info HUD Plugin loaded successfully!");
     }
@@ -128,10 +128,18 @@ public class ExamplePlugin extends JavaPlugin {
             if (def == null || !def.enabled) continue;
 
             ProximitySpawnSystem.SpawnStrategy strategy;
+            // Prefer command template if provided (keeps compatibility)
             if (def.commandTemplate != null && !def.commandTemplate.isBlank()) {
                 strategy = new ProximitySpawnSystem.CommandSpawnStrategy(def.commandTemplate, true);
             } else if (def.mob != null && !def.mob.isBlank()) {
-                strategy = new ProximitySpawnSystem.ReflectionSpawnStrategy(def.mob);
+                // Map JSON fields to strategy parameters — use sensible defaults if not provided
+                int spawnCount = (defHasInt(def, "spawnCount")) ? getIntField(def, "spawnCount") : 1;
+                int maxNearby = (defHasInt(def, "maxNearby")) ? getIntField(def, "maxNearby") : 6;
+                int maxAttempts = (defHasInt(def, "maxAttempts")) ? getIntField(def, "maxAttempts") : 8;
+                boolean debug = (defHasBoolean(def, "debug")) ? getBooleanField(def, "debug") : true;
+
+                // instantiate programmatic strategy using NPCPlugin
+                strategy = new ProgrammaticSpawnStrategy(def.mob, spawnCount, (int) Math.round(def.radius), maxNearby, maxAttempts, debug);
             } else {
                 LOGGER.atWarning().log("Spawn definition %s has neither commandTemplate nor mob; skipping", def.id);
                 continue;
@@ -141,7 +149,50 @@ public class ExamplePlugin extends JavaPlugin {
             ProximitySpawnSystem sys = new ProximitySpawnSystem(def.x, def.y, def.z, def.radius, strategy, def.cooldownMillis, def.world);
             this.getEntityStoreRegistry().registerSystem(sys);
 
-            LOGGER.atInfo().log("Registered proximity spawn %s at %s,%s,%s radius=%s world=%s", def.id, def.x, def.y, def.z, def.radius, def.world);
+            LOGGER.atInfo().log("Registered proximity spawn %s at %.1f,%.1f,%.1f radius=%.1f world=%s", def.id, def.x, def.y, def.z, def.radius, def.world);
+        }
+    }
+
+    // Helper reflection-like checks in case SpawnDefinition lacks optional fields.
+    // We avoid requiring compile-time fields beyond those in SpawnDefinition.java; these helpers read fields reflectively.
+    private static boolean defHasInt(SpawnDefinition def, String fieldName) {
+        try {
+            var f = SpawnDefinition.class.getDeclaredField(fieldName);
+            f.setAccessible(true);
+            Object v = f.get(def);
+            return v instanceof Number;
+        } catch (Throwable t) {
+            return false;
+        }
+    }
+    private static int getIntField(SpawnDefinition def, String fieldName) {
+        try {
+            var f = SpawnDefinition.class.getDeclaredField(fieldName);
+            f.setAccessible(true);
+            Object v = f.get(def);
+            return (v instanceof Number) ? ((Number)v).intValue() : 0;
+        } catch (Throwable t) {
+            return 0;
+        }
+    }
+    private static boolean defHasBoolean(SpawnDefinition def, String fieldName) {
+        try {
+            var f = SpawnDefinition.class.getDeclaredField(fieldName);
+            f.setAccessible(true);
+            Object v = f.get(def);
+            return v instanceof Boolean;
+        } catch (Throwable t) {
+            return false;
+        }
+    }
+    private static boolean getBooleanField(SpawnDefinition def, String fieldName) {
+        try {
+            var f = SpawnDefinition.class.getDeclaredField(fieldName);
+            f.setAccessible(true);
+            Object v = f.get(def);
+            return (v instanceof Boolean) ? (Boolean)v : false;
+        } catch (Throwable t) {
+            return false;
         }
     }
 }
