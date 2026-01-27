@@ -62,7 +62,9 @@ public class ExamplePlugin extends JavaPlugin {
         this.getCommandRegistry().registerCommand(new JoinInstanceCommand());
         this.getCommandRegistry().registerCommand(new DebugCommand(this, this.debugManager));
         this.getCommandRegistry().registerCommand(new SpawnerCreateCommand(this));
-
+        this.getCommandRegistry().registerCommand(new SpawnersCommand(this));
+        this.getCommandRegistry().registerCommand(new DeleteSpawnerCommand(this));
+        this.getCommandRegistry().registerCommand(new ReloadSpawnersCommand(this));
 
         // Create and register the single spawn manager system
         this.spawnManager = new ProximitySpawnSystem();
@@ -83,6 +85,7 @@ public class ExamplePlugin extends JavaPlugin {
                 // Ensure idempotent (AllWorldsLoaded might be dispatched multiple times)
                 if (spawnsLoaded.compareAndSet(false, true)) {
                     loadSpawnsOnServer();
+
                 } else {
                     LOGGER.atInfo().log("Spawns already loaded, skipping");
                 }
@@ -122,6 +125,17 @@ public class ExamplePlugin extends JavaPlugin {
     /**
      * Reads spawns.json and registers spawn entries into the single spawnManager.
      */
+    /**
+     * Clear the current spawn manager and re-load spawns from disk.
+     * Returns number of spawns registered.
+     */
+    public int reloadSpawns() {
+        if (this.spawnManager != null) {
+            this.spawnManager.clearSpawns();
+        }
+        loadSpawnsOnServer();
+        return (this.spawnManager != null) ? this.spawnManager.getSpawnCount() : 0;
+    }
     private void loadSpawnsOnServer() {
         List<SpawnDefinition> defs = SpawnConfigLoader.load(this);
         if (defs == null || defs.isEmpty()) {

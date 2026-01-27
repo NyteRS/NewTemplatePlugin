@@ -47,7 +47,19 @@ public class ProximitySpawnSystem extends EntityTickingSystem<EntityStore> {
     public Query<EntityStore> getQuery() {
         return this.query;
     }
+    /**
+     * Clear all registered spawns (used for reload).
+     */
+    public void clearSpawns() {
+        this.spawns.clear();
+    }
 
+    /**
+     * Return number of currently registered spawn entries.
+     */
+    public int getSpawnCount() {
+        return this.spawns.size();
+    }
     @Override
     public void tick(float deltaTime, int entityIndex, ArchetypeChunk<EntityStore> chunk, Store<EntityStore> store, CommandBuffer<EntityStore> commandBuffer) {
         try {
