@@ -13,157 +13,142 @@ import com.hypixel.hytale.server.core.entity.ItemUtils;
 import com.hypixel.hytale.server.core.modules.entity.damage.DeathComponent;
 import com.hypixel.hytale.server.core.modules.entity.damage.Damage;
 import com.hypixel.hytale.server.core.modules.entity.component.TransformComponent;
-import com.hypixel.hytale.server.core.universe.world.storage.EntityStore;
 import com.hypixel.hytale.server.core.entity.entities.Player;
 import com.hypixel.hytale.server.npc.entities.NPCEntity;
-import com.hypixel.hytale.server.npc.role.Role;
+import com.hypixel.hytale.server.core.universe.world.storage.EntityStore;
 
 import javax.annotation.Nonnull;
 import java.util.Collections;
 import java.util.List;
 
 /**
- * Run-before-drop system: give death drops directly to the killer (player) at death time.
- *
- * This runs BEFORE the engine drop systems so it can consume drops before item entities are spawned.
+ * Robust death-time system: uses Query.any() and inspects each added entity to see if it carries
+ * a DeathComponent. Logs everything and records deaths for the cleaner.
  */
 public final class DeathImmediateLootSystem extends RefSystem<EntityStore> {
     private static final HytaleLogger LOG = HytaleLogger.forEnclosingClass();
 
+    private final ItemSpawnCleaner cleaner;
+
+    public DeathImmediateLootSystem(ItemSpawnCleaner cleaner) {
+        this.cleaner = cleaner;
+        LOG.atInfo().log("[DeathImmediateLootSystem] constructed");
+    }
+
     @Nonnull
     @Override
     public Query<EntityStore> getQuery() {
-        ComponentType<EntityStore, DeathComponent> deathType = DeathComponent.getComponentType();
-        return (deathType == null) ? Query.any() : Archetype.of(new ComponentType[]{ deathType });
+        // Use Query.any() so we cannot miss the add event due to archetype mismatch.
+        return Query.any();
     }
 
     @Nonnull
     @Override
     public java.util.Set<com.hypixel.hytale.component.dependency.Dependency<EntityStore>> getDependencies() {
-        // Ensure we run BEFORE engine drop systems so we can hand items to the player first.
+        // Try to run before the engine NPC/player drop systems and before NPCSystems.OnDeathSystem (if present).
         return java.util.Set.of(
                 new SystemDependency(Order.BEFORE, com.hypixel.hytale.server.npc.systems.NPCDamageSystems.DropDeathItems.class),
-                new SystemDependency(Order.BEFORE, com.hypixel.hytale.server.core.modules.entity.damage.DeathSystems.DropPlayerDeathItems.class)
+                new SystemDependency(Order.BEFORE, com.hypixel.hytale.server.core.modules.entity.damage.DeathSystems.DropPlayerDeathItems.class),
+                // also try to run before NPCSystems.OnDeathSystem where that exists
+                new SystemDependency(Order.BEFORE, com.hypixel.hytale.server.npc.systems.NPCSystems.OnDeathSystem.class)
         );
     }
 
     @Override
-    public void onEntityAdded(@Nonnull Ref<EntityStore> deadRef, @Nonnull AddReason reason, @Nonnull Store<EntityStore> store, @Nonnull CommandBuffer<EntityStore> commandBuffer) {
+    public void onEntityAdded(@Nonnull Ref<EntityStore> ref, @Nonnull AddReason reason, @Nonnull Store<EntityStore> store, @Nonnull CommandBuffer<EntityStore> commandBuffer) {
         try {
-            DeathComponent death = (DeathComponent) commandBuffer.getComponent(deadRef, DeathComponent.getComponentType());
+            // Inspect the entity for DeathComponent at runtime
+            DeathComponent death = (DeathComponent) commandBuffer.getComponent(ref, DeathComponent.getComponentType());
             if (death == null) return;
 
+            LOG.atInfo().log("[DeathImmediateLoot] onEntityAdded ref=%d reason=%s deathInfo=%s", ref.getIndex(), reason, death.getDeathInfo());
+
             Damage deathInfo = death.getDeathInfo();
-            if (deathInfo == null) return;
-
-            // Only handle Deaths caused by an entity (i.e. last attacker is an entity ref)
-            if (!(deathInfo.getSource() instanceof Damage.EntitySource)) return;
-            Ref<EntityStore> attackerRef = ((Damage.EntitySource) deathInfo.getSource()).getRef();
-            if (attackerRef == null || !attackerRef.isValid()) return;
-
-            // We only auto-give to players (skip non-player attackers)
-            Player attackerPlayer = (Player) commandBuffer.getComponent(attackerRef, Player.getComponentType());
-            if (attackerPlayer == null) return;
-
-            // death position (optional but used for ItemUtils)
-            TransformComponent tx = (TransformComponent) commandBuffer.getComponent(deadRef, TransformComponent.getComponentType());
-            Vector3d deathPos = (tx != null) ? tx.getPosition() : null;
-
-            // 1) If death component already lists itemsLostOnDeath -> hand those to attacker
-            ItemStack[] itemsLost = death.getItemsLostOnDeath();
-            if (itemsLost != null && itemsLost.length > 0) {
-                LOG.atInfo().log("[DeathImmediateLoot] handing DeathComponent items to attacker (ref=%d) for dead entity %d", attackerRef.getIndex(), deadRef.getIndex());
-                giveStacksToPlayer(attackerRef, itemsLost, deathPos, commandBuffer);
-                // clear so engine's DropPlayerDeathItems doesn't duplicate them
-                death.setItemsLostOnDeath(Collections.emptyList());
+            if (deathInfo == null) {
+                LOG.atInfo().log("[DeathImmediateLoot] no deathInfo for ref=%d", ref.getIndex());
                 return;
             }
 
-            // 2) Otherwise, if this is an NPC, try to determine its dropList id from the role and generate drops
-            NPCEntity npc = (NPCEntity) commandBuffer.getComponent(deadRef, NPCEntity.getComponentType());
+            if (!(deathInfo.getSource() instanceof Damage.EntitySource)) {
+                LOG.atInfo().log("[DeathImmediateLoot] death.source not entity (ref=%d)", ref.getIndex());
+                return;
+            }
+
+            Ref<EntityStore> attackerRef = ((Damage.EntitySource) deathInfo.getSource()).getRef();
+            if (attackerRef == null || !attackerRef.isValid()) {
+                LOG.atInfo().log("[DeathImmediateLoot] attackerRef null/invalid for ref=%d", ref.getIndex());
+                return;
+            }
+
+            // record the death for the cleaner always (so cleaner can claim spawned items)
+            TransformComponent tx = (TransformComponent) commandBuffer.getComponent(ref, TransformComponent.getComponentType());
+            Vector3d deathPos = (tx != null) ? tx.getPosition().clone() : null;
+            cleaner.recordDeath(ref.getIndex(), deathPos, attackerRef);
+            LOG.atInfo().log("[DeathImmediateLoot] recorded death for cleaner: deadRef=%d attacker=%d pos=%s", ref.getIndex(), attackerRef.getIndex(), deathPos);
+
+            // Only give to players
+            Player attackerPlayer = (Player) commandBuffer.getComponent(attackerRef, Player.getComponentType());
+            if (attackerPlayer == null) {
+                LOG.atInfo().log("[DeathImmediateLoot] attacker is not a player for ref=%d attackerRef=%d", ref.getIndex(), attackerRef.getIndex());
+                return;
+            }
+
+            // 1) Try DeathComponent.getItemsLostOnDeath()
+            ItemStack[] itemsLost = death.getItemsLostOnDeath();
+            if (itemsLost != null && itemsLost.length > 0) {
+                LOG.atInfo().log("[DeathImmediateLoot] giving %d stacks from DeathComponent to attacker=%d", itemsLost.length, attackerRef.getIndex());
+                for (ItemStack s : itemsLost) {
+                    if (s == null) continue;
+                    LOG.atInfo().log("[DeathImmediateLoot] calling ItemUtils.interactivelyPickupItem for stack=%s", s);
+                    ItemUtils.interactivelyPickupItem(attackerRef, s, deathPos, (ComponentAccessor<EntityStore>) commandBuffer);
+                }
+                death.setItemsLostOnDeath(Collections.emptyList());
+                LOG.atInfo().log("[DeathImmediateLoot] cleared itemsLostOnDeath for deadRef=%d", ref.getIndex());
+                return;
+            }
+
+            // 2) If NPC, try role drop list
+            NPCEntity npc = (NPCEntity) commandBuffer.getComponent(ref, NPCEntity.getComponentType());
             if (npc != null) {
-                String dropListId = extractDropListIdFromRole(npc.getRole());
+                String dropListId = tryExtractDropListIdFromRole(npc.getRole());
+                LOG.atInfo().log("[DeathImmediateLoot] extracted dropListId=%s for deadRef=%d", dropListId, ref.getIndex());
                 if (dropListId != null) {
                     List<ItemStack> drops = ItemModule.get().getRandomItemDrops(dropListId);
+                    LOG.atInfo().log("[DeathImmediateLoot] ItemModule.getRandomItemDrops -> %d stacks", drops == null ? 0 : drops.size());
                     if (drops != null && !drops.isEmpty()) {
-                        LOG.atInfo().log("[DeathImmediateLoot] Generated %d drops for dropList=%s; giving to attacker %d", drops.size(), dropListId, attackerRef.getIndex());
                         for (ItemStack stack : drops) {
-                            if (stack == null || stack.isEmpty()) continue;
+                            if (stack == null) continue;
+                            LOG.atInfo().log("[DeathImmediateLoot] giving generated stack=%s to attacker=%d", stack, attackerRef.getIndex());
                             ItemUtils.interactivelyPickupItem(attackerRef, stack, deathPos, (ComponentAccessor<EntityStore>) commandBuffer);
                         }
-                        // Try to prevent engine duplicate spawning; clear DeathComponent items (best-effort).
                         death.setItemsLostOnDeath(Collections.emptyList());
+                        LOG.atInfo().log("[DeathImmediateLoot] handed droplist items and cleared DeathComponent for deadRef=%d", ref.getIndex());
                         return;
-                    } else {
-                        LOG.atInfo().log("[DeathImmediateLoot] dropList '%s' produced no stacks", dropListId);
                     }
-                } else {
-                    LOG.atInfo().log("[DeathImmediateLoot] could not extract dropListId from npc.role for dead entity %d", deadRef.getIndex());
                 }
             }
 
-            // nothing we could do deterministically here; fallback to leaving drops to engine
+            LOG.atInfo().log("[DeathImmediateLoot] nothing handed for deadRef=%d", ref.getIndex());
         } catch (Throwable t) {
-            LOG.atWarning().withCause(t).log("[DeathImmediateLoot] error while handling death entity %d", deadRef.getIndex());
+            LOG.atWarning().withCause(t).log("[DeathImmediateLoot] error handling death ref=%d", ref.getIndex());
         }
     }
 
     @Override
     public void onEntityRemove(@Nonnull Ref<EntityStore> ref, @Nonnull RemoveReason reason, @Nonnull Store<EntityStore> store, @Nonnull CommandBuffer<EntityStore> commandBuffer) {
-        // nothing to do here for this system
+        // keep deathRecords until TTL expires in cleaner
     }
 
-    // Utility: hand an array of ItemStack to player via ItemUtils (uses engine pickup logic)
-    private static void giveStacksToPlayer(Ref<EntityStore> playerRef, ItemStack[] stacks, Vector3d origin, ComponentAccessor<EntityStore> accessor) {
-        for (ItemStack s : stacks) {
-            if (s == null || s.isEmpty()) continue;
-            ItemUtils.interactivelyPickupItem(playerRef, s, origin, accessor);
-        }
-    }
-
-    /**
-     * Try common ways to extract a drop-list id from the Role object.
-     * Replace or extend these attempts with the exact method from your Role API if you know it.
-     */
-    @SuppressWarnings("unchecked")
-    private static String extractDropListIdFromRole(Role role) {
+    // same reflection helper as before; keeps safe attempts to find dropListId
+    private static String tryExtractDropListIdFromRole(Object role) {
         if (role == null) return null;
-
         try {
-            // First try common getter names that might exist on Role/role definition
-            // (Replace these with the real method if you know it; these are fallbacks.)
-            try {
-                java.lang.reflect.Method m = role.getClass().getMethod("getDropListId");
-                Object v = m.invoke(role);
-                if (v instanceof String && !((String) v).isEmpty()) return (String) v;
-            } catch (NoSuchMethodException ignore) {}
-
-            try {
-                java.lang.reflect.Method m = role.getClass().getMethod("getDroplistId");
-                Object v = m.invoke(role);
-                if (v instanceof String && !((String) v).isEmpty()) return (String) v;
-            } catch (NoSuchMethodException ignore) {}
-
-            // Some Role implementations expose a "getRoleAsset()" or "getAsset()" that contains metadata
-            try {
-                java.lang.reflect.Method m = role.getClass().getMethod("getRoleAsset");
-                Object asset = m.invoke(role);
-                if (asset != null) {
-                    try {
-                        java.lang.reflect.Method md = asset.getClass().getMethod("getDropListId");
-                        Object v = md.invoke(asset);
-                        if (v instanceof String && !((String) v).isEmpty()) return (String) v;
-                    } catch (NoSuchMethodException ignore2) {}
-                }
-            } catch (NoSuchMethodException ignore) {}
-
-            // If the Role class has a generic "getData" or "getDefinition" you can inspect that too
-            // Add additional reflection attempts here as needed for your server version.
-
-        } catch (Throwable t) {
-            LOG.atWarning().withCause(t).log("[DeathImmediateLoot] Reflection failure when extracting dropListId from Role");
-        }
-
+            try { var m = role.getClass().getMethod("getDropListId"); Object v = m.invoke(role); if (v instanceof String) return (String)v; } catch (NoSuchMethodException ignored) {}
+            try { var m = role.getClass().getMethod("getDroplistId"); Object v = m.invoke(role); if (v instanceof String) return (String)v; } catch (NoSuchMethodException ignored) {}
+            try { var m = role.getClass().getMethod("getRoleAsset"); Object asset = m.invoke(role); if (asset != null) {
+                try { var md = asset.getClass().getMethod("getDropListId"); Object v = md.invoke(asset); if (v instanceof String) return (String)v; } catch (NoSuchMethodException ignored2) {}
+            } } catch (NoSuchMethodException ignored) {}
+        } catch (Throwable t) {}
         return null;
     }
 }

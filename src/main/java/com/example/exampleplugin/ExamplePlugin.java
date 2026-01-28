@@ -33,7 +33,10 @@ public class ExamplePlugin extends JavaPlugin {
     private DungeonManager dungeonManager;
     private ScoreboardManager scoreboardManager;
     private DeathImmediateLootSystem deathImmediateLootSystem;
+    private ItemSpawnCleaner itemSpawnCleaner;
+    private DeathGiveSystem deathGiveSystem;
     private ProximitySpawnSystem spawnManager;
+    private DeathWatcherSystem deathWatcherSystem;
 
     // ensure we only load spawns once
     private final AtomicBoolean spawnsLoaded = new AtomicBoolean(false);
@@ -72,8 +75,14 @@ public class ExamplePlugin extends JavaPlugin {
     protected void start() {
         super.start();
 
-        this.deathImmediateLootSystem = new DeathImmediateLootSystem();
+        this.itemSpawnCleaner = new ItemSpawnCleaner();
+        this.deathGiveSystem = new DeathGiveSystem(this.itemSpawnCleaner);
+        this.deathImmediateLootSystem = new DeathImmediateLootSystem(this.itemSpawnCleaner);
+        this.getEntityStoreRegistry().registerSystem(this.deathGiveSystem);
+        this.getEntityStoreRegistry().registerSystem(this.itemSpawnCleaner);
         this.getEntityStoreRegistry().registerSystem(this.deathImmediateLootSystem);
+        this.deathWatcherSystem = new DeathWatcherSystem(this.itemSpawnCleaner);
+        this.getEntityStoreRegistry().registerSystem(this.deathWatcherSystem);
         // Auto-pickup fallback for spawned item entities (uses death markers)
 
         getEventRegistry().registerGlobal(PlayerReadyEvent.class, this::onPlayerReady);
