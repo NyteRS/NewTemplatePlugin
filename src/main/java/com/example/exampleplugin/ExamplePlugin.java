@@ -32,9 +32,7 @@ public class ExamplePlugin extends JavaPlugin {
     private DebugManager debugManager;
     private DungeonManager dungeonManager;
     private ScoreboardManager scoreboardManager;
-    private AutoLootPickupSystem autoLootPickupSystem;
-    private DeathRecorderSystem deathRecorderSystem;
-    // single manager system instance
+    private DeathImmediateLootSystem deathImmediateLootSystem;
     private ProximitySpawnSystem spawnManager;
 
     // ensure we only load spawns once
@@ -52,11 +50,6 @@ public class ExamplePlugin extends JavaPlugin {
         this.dungeonManager = new DungeonManager();
 
         this.getEntityStoreRegistry().registerSystem(new DarkvaleHudSystem(this.debugManager));
-        this.autoLootPickupSystem = new AutoLootPickupSystem();
-        this.deathRecorderSystem = new DeathRecorderSystem(this.autoLootPickupSystem);
-
-        this.getEntityStoreRegistry().registerSystem(this.autoLootPickupSystem);
-        this.getEntityStoreRegistry().registerSystem(this.deathRecorderSystem);
         // Commands (existing)
         this.getCommandRegistry().registerCommand(new CustomInstancesNewCommand());
         this.getCommandRegistry().registerCommand(new CustomInstancesCopyCommand());
@@ -72,7 +65,6 @@ public class ExamplePlugin extends JavaPlugin {
         // Create and register the single spawn manager system
         this.spawnManager = new ProximitySpawnSystem();
         this.getEntityStoreRegistry().registerSystem(this.spawnManager);
-
         this.getLogger().at(Level.INFO).log("Simple Debug Info HUD Plugin loaded successfully!");
     }
 
@@ -80,7 +72,8 @@ public class ExamplePlugin extends JavaPlugin {
     protected void start() {
         super.start();
 
-
+        this.deathImmediateLootSystem = new DeathImmediateLootSystem();
+        this.getEntityStoreRegistry().registerSystem(this.deathImmediateLootSystem);
         // Auto-pickup fallback for spawned item entities (uses death markers)
 
         getEventRegistry().registerGlobal(PlayerReadyEvent.class, this::onPlayerReady);
